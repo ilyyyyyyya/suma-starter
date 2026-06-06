@@ -10,7 +10,7 @@ This vault is the user's personal knowledge operating system. Everything in one 
 
 When the user says "vault" they mean this directory (`~/Desktop/vault/`).
 
-When the user says "Suma" or "suma" they mean the personal dashboard. The markdown sources live at `Suma/` in the vault; the renderer and rendered HTML live in a sibling code folder at `~/Desktop/code/12-suma/`.
+When the user says "Suma" or "suma" they mean the personal dashboard. It's one folder in the vault, `Suma/`, holding the markdown sources, the renderer (`build.py`), and the generated `dashboard.html` together.
 
 ## Folder Structure (suggested — adapt to fit)
 
@@ -30,7 +30,7 @@ Not every folder is mandatory. The only one Suma actually needs is `Suma/`.
 
 ## Suma
 
-Suma is the personal dashboard. Markdown sources live in the vault at `Suma/`; the renderer and rendered HTML live at `~/Desktop/code/12-suma/`.
+Suma is the personal dashboard. It all lives in one folder in the vault, `Suma/`: the markdown sources you edit, the renderer (`build.py`), and the generated `dashboard.html`.
 
 **In the vault (`vault/Suma/`):**
 - `dashboard.md` — Now (project-grouped checkbox tasks) + Check-ins
@@ -43,7 +43,7 @@ Suma is the personal dashboard. Markdown sources live in the vault at `Suma/`; t
 - `builds.md` — **auto-generated** by `build.py` from `~/Desktop/code/`; do not edit by hand
 - `toolkit.md` — **auto-generated** by `build.py` from `~/.claude/` + `brew`/`npm` (your MCP servers, skills, plugins, commands, CLIs); do not edit by hand
 
-**In the code folder (`~/Desktop/code/12-suma/`):**
+**Also in `Suma/` (generated / not hand-edited):**
 - `build.py` — stdlib-only renderer; no `pip install` required
 - `dashboard.html` — generated single-page view; open by double-click, no server needed
 
@@ -61,7 +61,7 @@ When the user says things like:
 - "Suma — move X to idle"
 - "log this in Suma"
 
-→ edit `Suma/dashboard.md` (tasks / check-ins) or `Suma/projects.md` (project state) and/or append a one-line entry to today's section in `Suma/changelog.md`, then run `python3 ~/Desktop/code/12-suma/build.py` to regenerate the dashboard. If today's date heading doesn't exist yet in changelog, add it at the top.
+→ edit `Suma/dashboard.md` (tasks / check-ins) or `Suma/projects.md` (project state) and/or append a one-line entry to today's section in `Suma/changelog.md`, then run `python3 Suma/build.py` to regenerate the dashboard. If today's date heading doesn't exist yet in changelog, add it at the top.
 
 Keep one-line discipline: each project gets one line on the dashboard. Detail goes in the project file, not the dashboard.
 

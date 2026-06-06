@@ -2,22 +2,20 @@
 
 This is a step-by-step install guide for the AI coding agent setting up Suma for the user. Read it end-to-end before doing anything.
 
-## 1. Ask the user three questions before you touch the filesystem
+## 1. Ask the user two questions before you touch the filesystem
 
-1. **Where should the vault live?** Default suggestion: `~/Desktop/vault/`. The vault is where the user keeps notes, project files, etc. — Suma is one folder inside it.
-2. **Where should the renderer live?** Default suggestion: `~/Desktop/code/12-suma/`. The renderer must be a sibling of the vault (i.e. both inside `~/Desktop/`).
-3. **Do they already have a folder of notes they want to keep?** If yes, plan around it instead of creating a new vault.
+1. **Where should the vault live?** Default suggestion: `~/Desktop/vault/`. The vault is where the user keeps notes, project files, etc. Suma is one folder inside it.
+2. **Do they already have a folder of notes they want to keep?** If yes, Suma goes inside it. Plan around it instead of creating a new vault.
 
-If they say "just pick sensible defaults", use `~/Desktop/vault/` and `~/Desktop/code/12-suma/`. Do not pick a different prefix without asking — the number `12-` doesn't matter, but the script path must match what's inside `build.py`.
+If they say "just pick sensible defaults", use `~/Desktop/vault/`. Everything Suma needs lives in one folder inside it, `vault/Suma/`. There's no separate code folder to place or configure.
 
-## 2. Create the folders
+## 2. Create the folder
 
 ```
 mkdir -p ~/Desktop/vault/Suma
-mkdir -p ~/Desktop/code/12-suma
 ```
 
-If the user picked different paths, substitute throughout — and remember to update the constants near the top of `build.py` (`VAULT`, `CODE_ROOT`, `SCRIPT_DIR` flow from `Path(__file__)`, so just placing the script in the right folder works).
+That's the only folder Suma needs. The renderer and the generated dashboard both live inside it, next to the sources. If the user picked a different vault path, substitute it. There are no constants to edit: `build.py` works out where it is from its own location.
 
 ## 3. Drop the markdown templates into `vault/Suma/`
 
@@ -33,20 +31,13 @@ Copy every file from this kit's `sources/` folder into `~/Desktop/vault/Suma/`:
 
 `builds.md` and `toolkit.md` are **auto-generated** by `build.py` on each run (from your code folder and your coding-agent setup). There's nothing to copy for them, and you should never write them by hand.
 
-## 4. Drop `build.py` into the renderer folder
+## 4. Drop `build.py` into `vault/Suma/`
 
-Copy this kit's `build.py` into `~/Desktop/code/12-suma/build.py`.
+Copy this kit's `build.py` into `~/Desktop/vault/Suma/build.py`, right next to the markdown sources.
 
-The script is stdlib-only — no `pip install` required. It works on macOS/Linux with system Python 3.
+The script is stdlib-only — no `pip install` required. It works on macOS/Linux with system Python 3. There are no paths to configure: it reads the `.md` files in its own folder and writes `dashboard.html` there too.
 
-If the user picked non-default paths, you may need to adjust three constants near the top of `build.py`:
-
-```python
-VAULT = Path.home() / "Desktop" / "vault"
-CODE_ROOT = Path.home() / "Desktop" / "code"
-```
-
-Update them to match.
+One optional knob: the **Builds** tab scans `~/Desktop/code/` by default. If the user keeps code projects somewhere else (or nowhere), change the `CODE_ROOT` line near the top of `build.py`, or just leave it. An empty Builds tab is harmless.
 
 ## 5. Drop `CLAUDE.md` into the vault root
 
@@ -71,10 +62,10 @@ The **Builds** and **Toolkit** tabs need no content from you — they scan the m
 ## 7. Run the build
 
 ```
-python3 ~/Desktop/code/12-suma/build.py
+python3 ~/Desktop/vault/Suma/build.py
 ```
 
-It should print a confirmation and write `~/Desktop/code/12-suma/dashboard.html`.
+It should print a confirmation and write `~/Desktop/vault/Suma/dashboard.html`.
 
 ## 8. Open the dashboard
 
@@ -83,7 +74,7 @@ Double-click `dashboard.html` in Finder. It opens in the default browser. No ser
 Bookmark it. Add it to the dock if you want. Some users put a shell alias like:
 
 ```
-alias suma="python3 ~/Desktop/code/12-suma/build.py && open ~/Desktop/code/12-suma/dashboard.html"
+alias suma="python3 ~/Desktop/vault/Suma/build.py && open ~/Desktop/vault/Suma/dashboard.html"
 ```
 
 ## 9. Teach the user the loop
@@ -91,7 +82,7 @@ alias suma="python3 ~/Desktop/code/12-suma/build.py && open ~/Desktop/code/12-su
 Every day, the loop is:
 
 1. Edit one of the `.md` files in `~/Desktop/vault/Suma/`.
-2. Run `python3 ~/Desktop/code/12-suma/build.py`.
+2. Run `python3 ~/Desktop/vault/Suma/build.py`.
 3. Refresh the dashboard.
 
 That's it. No app, no sync, no account.
@@ -108,7 +99,7 @@ When they say things like "update Suma about X" — that means: edit the right `
 
 ## Common pitfalls
 
-- **Mixed paths**: vault inside `~/Documents/` but script inside `~/Desktop/code/` — the relative `../../vault/` links inside the rendered HTML will break. Keep them as siblings.
+- **Moved `build.py`**: it must stay inside the `Suma/` folder, next to the sources — it locates everything relative to its own position. Don't move it off into a separate code folder.
 - **Wrong filenames**: the script reads specific filenames (`dashboard.md`, `projects.md`, etc.). Don't rename them. Don't add `.txt`. Don't capitalise them.
 - **Empty `## Now` section**: the renderer is fine with it but the dashboard reads dead. Seed it.
 - **Auto-generated `builds.md`**: don't edit by hand. If the user wants a build listed differently, fix the underlying repo's `README.md` or git remote.
