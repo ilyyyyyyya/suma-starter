@@ -37,8 +37,10 @@ Suma is the personal dashboard. Markdown sources live in the vault at `Suma/`; t
 - `projects.md` — Overview + Active + Idle / Resumable project state
 - `ideas.md` — sketched, not built; promote into Active in `projects.md` when one earns the time
 - `learning.md` — what you're learning, reading, watching, saving
+- `subscriptions.md` — recurring subscriptions, renewal dates, and which card pays for each
 - `changelog.md` — running log of moves, additions, status changes; newest date first
 - `builds.md` — **auto-generated** by `build.py` from `~/Desktop/code/`; do not edit by hand
+- `toolkit.md` — **auto-generated** by `build.py` from `~/.claude/` + `brew`/`npm` (your MCP servers, skills, plugins, commands, CLIs); do not edit by hand
 
 **In the code folder (`~/Desktop/code/12-suma/`):**
 - `build.py` — stdlib-only renderer; no `pip install` required
@@ -111,5 +113,5 @@ Before creating any new files in this vault:
 
 When helping with or editing writing in this vault:
 
-- **Em dashes**: use sparingly. One per paragraph max. Prefer commas, periods, or restructured sentences instead.
+- **Em dashes**: default to none. Rewrite with a comma, a period, or two sentences instead. Keep one only if removing it genuinely breaks the meaning, which should be rare.
 - **Avoid AI-sounding phrases**: "But X made me hear it differently", "What strikes me now", "I've stopped finding that strange" — these read as generated. Keep language plain and direct.

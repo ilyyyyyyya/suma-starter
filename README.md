@@ -22,32 +22,35 @@ suma-starter/
     ├── projects.md
     ├── ideas.md
     ├── learning.md
+    ├── subscriptions.md
     └── changelog.md
 ```
 
-`builds.md` is **auto-generated** by `build.py` from your `~/Desktop/code/` folder — don't write it by hand.
+`builds.md` and `toolkit.md` are **auto-generated** by `build.py` (from your code folder and your coding-agent setup) — don't write them by hand.
 
 ---
 
 ## What Suma actually is
 
-Suma is one HTML page with six tabs:
+Suma is one HTML page with eight tabs:
 
 1. **Dashboard** — "Now" (project-grouped checkbox to-dos) + "Check-ins" (one section per person you sync with, agenda bullets)
 2. **Projects** — Overview (~5 portfolio bullets) + Active (Building / Advising) + Idle / Resumable. One line per project: status + "Next:" clause.
 3. **Ideas** — Sketched, not built. Promote into Projects when one earns the time.
 4. **Learning** — Currently reading / Books / Watch / Leisure / Articles / Tools / Design refs / People / Bookmarks. An inventory, not tasks.
-5. **Builds** — Auto-scanned list of code projects on your machine, grouped by deploy status (live / on git / local only).
-6. **Changelog** — A running log of what changed in the vault. Newest day first, one line per change.
+5. **Subscriptions** — Recurring subscriptions, renewal dates, and which card pays for each. See your run-rate at a glance.
+6. **Builds** — Auto-scanned list of code projects on your machine, grouped by deploy status (live / on git / local only).
+7. **Toolkit** — Auto-scanned list of what's wired into your coding agent: MCP servers, skills, plugins, slash-commands and CLIs. The stuff that's installed but otherwise invisible. Fills itself in; shows a quiet empty state if you have none.
+8. **Changelog** — A running log of what changed in the vault. Newest day first, one line per change.
 
-Each tab maps to exactly one source file in `sources/`. The whole point is that you write plain markdown and the dashboard renders itself.
+Most tabs map to one source file in `sources/`. Builds and Toolkit have no source — they scan your machine on each rebuild. The whole point is that you write plain markdown and the dashboard renders itself.
 
 ---
 
 ## How it works
 
 1. You keep a folder of markdown files somewhere on disk (the "vault").
-2. Inside the vault, a `Suma/` subfolder holds the six source files above.
+2. Inside the vault, a `Suma/` subfolder holds the markdown source files above.
 3. A Python script in a sibling code folder (`~/Desktop/code/12-suma/build.py`) reads those `.md` files and writes a single `dashboard.html` next to itself.
 4. You double-click `dashboard.html` to view it. No server needed.
 
@@ -61,6 +64,7 @@ The vault and the renderer must live as **siblings**:
 │       ├── projects.md
 │       ├── ideas.md
 │       ├── learning.md
+│       ├── subscriptions.md
 │       └── changelog.md
 └── code/
     └── 12-suma/
