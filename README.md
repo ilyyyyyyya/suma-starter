@@ -23,7 +23,8 @@ suma-starter/
     ├── ideas.md
     ├── learning.md
     ├── subscriptions.md
-    └── changelog.md
+    ├── changelog.md
+    └── quotes.md       ← starter quotes for the daily quote (optional)
 ```
 
 `builds.md` and `toolkit.md` are **auto-generated** by `build.py` (from your code folder and your coding-agent setup) — don't write them by hand.
@@ -34,7 +35,7 @@ suma-starter/
 
 Suma is one HTML page with eight tabs:
 
-1. **Dashboard** — "Now" (project-grouped checkbox to-dos) + "Check-ins" (one section per person you sync with, agenda bullets)
+1. **Dashboard** — "Now" (project-grouped checkbox to-dos) + "Check-ins" (one section per person you sync with, agenda bullets), with a quietly rotating daily quote up top
 2. **Projects** — Overview (~5 portfolio bullets) + Active (Building / Advising) + Idle / Resumable. One line per project: status + "Next:" clause.
 3. **Ideas** — Sketched, not built. Promote into Projects when one earns the time.
 4. **Learning** — Currently reading / Books / Watch / Leisure / Articles / Tools / Design refs / People / Bookmarks. An inventory, not tasks.

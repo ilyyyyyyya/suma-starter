@@ -38,7 +38,7 @@ PROJ_SRC = SUMA / "projects.md"
 SUBS_SRC = SUMA / "subscriptions.md"
 BUILDS_OUT = SUMA / "builds.md"
 TOOLKIT_OUT = SUMA / "toolkit.md"
-QUOTES_SRC = ROOT / "Drafts" / "Quotes.md"
+QUOTES_SRC = SUMA / "quotes.md"
 OUT = SCRIPT_DIR / "dashboard.html"
 
 DATE_RE = re.compile(r"^\d{4}-\d{2}-\d{2}")
@@ -327,19 +327,24 @@ def archive_completed_tasks() -> int:
 
 
 def load_quotes() -> list[str]:
-    """Read Drafts/Quotes.md and return a list of quote chunks (paragraph-separated)."""
+    """Read Suma/quotes.md and return a list of quote chunks (paragraph-separated).
+
+    Optional file. Each chunk is a quote plus its attribution line. Markdown
+    headings (`# Quotes`, `## Section`) and horizontal rules are skipped, so the
+    file can be organised into categories without those leaking in as quotes.
+    """
     if not QUOTES_SRC.exists():
         return []
     text = QUOTES_SRC.read_text(encoding="utf-8")
-    text = re.sub(r"^# Quotes\s*\n+", "", text, count=1)
     chunks = re.split(r"\n\s*\n", text)
     quotes = []
     for chunk in chunks:
         chunk = chunk.strip()
         if not chunk:
             continue
-        # Skip horizontal-rule separators
-        if set(chunk) <= set("-—"):
+        if set(chunk) <= set("-—"):           # horizontal-rule separator
+            continue
+        if chunk.startswith("#"):              # markdown heading, not a quote
             continue
         quotes.append(chunk)
     return quotes

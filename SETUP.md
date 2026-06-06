@@ -29,6 +29,7 @@ Copy every file from this kit's `sources/` folder into `~/Desktop/vault/Suma/`:
 - `learning.md`
 - `subscriptions.md`
 - `changelog.md`
+- `quotes.md` — starter quotes for the daily quote on the Dashboard; optional, but it ships filled so the feature works out of the box
 
 `builds.md` and `toolkit.md` are **auto-generated** by `build.py` on each run (from your code folder and your coding-agent setup). There's nothing to copy for them, and you should never write them by hand.
 
@@ -111,4 +112,4 @@ When they say things like "update Suma about X" — that means: edit the right `
 - **Wrong filenames**: the script reads specific filenames (`dashboard.md`, `projects.md`, etc.). Don't rename them. Don't add `.txt`. Don't capitalise them.
 - **Empty `## Now` section**: the renderer is fine with it but the dashboard reads dead. Seed it.
 - **Auto-generated `builds.md`**: don't edit by hand. If the user wants a build listed differently, fix the underlying repo's `README.md` or git remote.
-- **`Drafts/Quotes.md`**: the original renderer pulls a daily quote from this file if it exists. It's optional. If the user has no such file, the quote area is just empty — no error.
+- **`quotes.md`**: the renderer shows one quote a day on the Dashboard, pulled from `Suma/quotes.md` and rotated by date. The kit ships a starter set, so it works immediately. It's optional — delete the file and the quote area is just empty, no error. The user can prune or add their own; headings and `---` rules in the file are ignored.

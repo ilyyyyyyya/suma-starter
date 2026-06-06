@@ -39,6 +39,7 @@ Suma is the personal dashboard. Markdown sources live in the vault at `Suma/`; t
 - `learning.md` — what you're learning, reading, watching, saving
 - `subscriptions.md` — recurring subscriptions, renewal dates, and which card pays for each
 - `changelog.md` — running log of moves, additions, status changes; newest date first
+- `quotes.md` — optional starter quotes for the daily quote on the Dashboard; one shown per day, rotated by date
 - `builds.md` — **auto-generated** by `build.py` from `~/Desktop/code/`; do not edit by hand
 - `toolkit.md` — **auto-generated** by `build.py` from `~/.claude/` + `brew`/`npm` (your MCP servers, skills, plugins, commands, CLIs); do not edit by hand
 

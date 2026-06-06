@@ -148,6 +148,13 @@ Rows reuse the calm `build-tag` chip for scope/source (e.g. `global`, `personal`
 - No timestamps within a day — order within a date doesn't need to be precise.
 - The rendered header on the Changelog tab auto-derives "last updated" from the most recent date heading.
 
+## Daily quote
+
+- One quote sits quietly above Now on the Dashboard, in muted italic. It's the one bit of personality on the page.
+- Source is `Suma/quotes.md`: quote then `— Attribution`, blank line between entries. Headings and `---` rules are ignored, so the file can be grouped into categories.
+- The renderer picks one per day deterministically (rotates by date), so it's stable within a day and changes tomorrow. No randomness, no API.
+- Optional. No file means no quote, not an error. Keep it calm — don't make it big, boxed, or coloured.
+
 ## Plain language rule (this applies to every tab)
 
 Suma is read back by the user, not by stakeholders. Bullets should read like a teammate update.
