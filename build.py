@@ -21,6 +21,8 @@ import datetime as _dt
 import html
 import json
 import re
+import shutil
+import subprocess
 from pathlib import Path
 
 SCRIPT_DIR = Path(__file__).resolve().parent
@@ -33,8 +35,10 @@ LOG_SRC = SUMA / "changelog.md"
 LEARN_SRC = SUMA / "learning.md"
 IDEAS_SRC = SUMA / "ideas.md"
 PROJ_SRC = SUMA / "projects.md"
+SUBS_SRC = SUMA / "subscriptions.md"
 BUILDS_OUT = SUMA / "builds.md"
-QUOTES_SRC = ROOT / "Drafts" / "Quotes.md"
+TOOLKIT_OUT = SUMA / "toolkit.md"
+QUOTES_SRC = SUMA / "quotes.md"
 OUT = SCRIPT_DIR / "dashboard.html"
 
 DATE_RE = re.compile(r"^\d{4}-\d{2}-\d{2}")
@@ -49,6 +53,13 @@ SECTION_DOTS = {
     "Personal": "WARM",                 # human / domestic
     "Check-ins": "WARM",
     "Learning": "MIST",
+    "Subscriptions": "FOREST",
+    # Toolkit sections
+    "MCP servers": "COOL",
+    "Skills": "VIBRANT",
+    "Plugins": "TWILIGHT",
+    "Commands": "SUNSET",
+    "CLIs": "FOREST",
     # Learning sub-sections (H3) — used by their own TOC
     "Currently reading": "COOL",
     "MADS": "VIBRANT",                  # primary project
@@ -316,19 +327,24 @@ def archive_completed_tasks() -> int:
 
 
 def load_quotes() -> list[str]:
-    """Read Drafts/Quotes.md and return a list of quote chunks (paragraph-separated)."""
+    """Read Suma/quotes.md and return a list of quote chunks (paragraph-separated).
+
+    Optional file. Each chunk is a quote plus its attribution line. Markdown
+    headings (`# Quotes`, `## Section`) and horizontal rules are skipped, so the
+    file can be organised into categories without those leaking in as quotes.
+    """
     if not QUOTES_SRC.exists():
         return []
     text = QUOTES_SRC.read_text(encoding="utf-8")
-    text = re.sub(r"^# Quotes\s*\n+", "", text, count=1)
     chunks = re.split(r"\n\s*\n", text)
     quotes = []
     for chunk in chunks:
         chunk = chunk.strip()
         if not chunk:
             continue
-        # Skip horizontal-rule separators
-        if set(chunk) <= set("-—"):
+        if set(chunk) <= set("-—"):           # horizontal-rule separator
+            continue
+        if chunk.startswith("#"):              # markdown heading, not a quote
             continue
         quotes.append(chunk)
     return quotes
@@ -489,7 +505,7 @@ def scan_builds() -> list[dict]:
             continue
         if child.name.startswith("."):
             continue
-        if child.name == "12-suma":  # Suma itself — skip
+        if child.resolve() == SCRIPT_DIR:  # the Suma renderer folder itself — skip
             continue
         remote = _read_git_remote(child)
         live = _find_live_urls(child)
@@ -611,6 +627,429 @@ def render_builds_md(builds: list[dict]) -> str:
         lines.extend(fmt_row(b) for b in local)
         lines.append("")
 
+    return "\n".join(lines).rstrip() + "\n"
+
+
+# ─── Toolkit scanner ────────────────────────────────────────────────────────
+# Surfaces the otherwise-invisible agent environment: configured MCP servers,
+# installed skills, plugins, personal slash-commands, and CLIs. Read-only from
+# ~/.claude.json, ~/.claude/, and brew/npm. Passive — installing a new skill or
+# MCP server makes it show up on the next rebuild, no config. Safe to ship in a
+# template: it scans whoever runs it, and shows a quiet empty state if the
+# machine has none of these (e.g. someone not using a coding agent).
+
+CLAUDE_HOME = Path.home() / ".claude"
+CLAUDE_JSON = Path.home() / ".claude.json"
+
+# Curated one-liners for things that carry no on-disk description. Anything not
+# listed still shows up (name + factual config) — the blurb is just nicer when
+# we're confident. Generic, well-known tools only; extend for your own setup.
+MCP_DESC = {
+    "shadcn": "shadcn/ui component registry",
+    "playwright": "Browser automation & testing",
+    "github": "GitHub repos, issues and PRs",
+}
+PLUGIN_DESC: dict[str, str] = {}
+CLI_DESC = {
+    "claude": "Claude Code CLI",
+    "gh": "GitHub CLI",
+    "git": "Version control",
+    "node": "Node.js runtime",
+    "bun": "JS runtime & toolkit",
+    "deno": "Secure JS/TS runtime",
+    "pnpm": "Fast package manager",
+    "yarn": "Package manager",
+    "vercel": "Deploy & hosting CLI",
+    "ffmpeg": "Audio & video processing",
+    "poppler": "PDF rendering utilities",
+    "go": "Go toolchain",
+    "rustc": "Rust compiler",
+    "cargo": "Rust package manager",
+    "docker": "Containers",
+    "jq": "JSON processor",
+    "rg": "ripgrep — fast search",
+    "fzf": "Fuzzy finder",
+}
+
+
+def _read_frontmatter(path: Path) -> dict:
+    """Parse leading `--- ... ---` YAML-ish frontmatter into a flat dict.
+
+    Tolerant of multi-line values and YAML block scalars (`|`, `>`).
+    """
+    try:
+        text = path.read_text(encoding="utf-8", errors="ignore")
+    except OSError:
+        return {}
+    if not text.startswith("---"):
+        return {}
+    end = text.find("\n---", 3)
+    if end == -1:
+        return {}
+    data: dict[str, str] = {}
+    key = None
+    for line in text[3:end].splitlines():
+        m = re.match(r"^([A-Za-z0-9_-]+):\s*(.*)$", line)
+        if m:
+            key = m.group(1)
+            val = m.group(2).strip()
+            data[key] = "" if re.fullmatch(r"[|>][+\-]?\d*", val) else val.strip('"\'')
+        elif key and line.strip():
+            data[key] = (data[key] + " " + line.strip()).strip()
+    return data
+
+
+def _short_desc(text: str, limit: int = 130) -> str:
+    """First sentence, or a clipped clause — keeps rows scannable."""
+    text = " ".join((text or "").split())
+    if not text:
+        return ""
+    m = re.match(r"^(.*?[.!?])(\s|$)", text)
+    if m and len(m.group(1)) <= limit:
+        return m.group(1)
+    if len(text) <= limit:
+        return text
+    return text[:limit].rstrip() + "…"
+
+
+def _run(cmd: list[str], timeout: int = 12) -> list[str]:
+    """Run a command, return non-empty stdout lines, or [] on any failure."""
+    try:
+        proc = subprocess.run(cmd, capture_output=True, text=True, timeout=timeout)
+    except (OSError, subprocess.SubprocessError):
+        return []
+    if proc.returncode != 0:
+        return []
+    return [ln.strip() for ln in proc.stdout.splitlines() if ln.strip()]
+
+
+def _installed_plugins() -> list[dict]:
+    f = CLAUDE_HOME / "plugins" / "installed_plugins.json"
+    try:
+        data = json.loads(f.read_text(encoding="utf-8", errors="ignore"))
+    except (OSError, json.JSONDecodeError):
+        return []
+    out = []
+    for key, entries in (data.get("plugins") or {}).items():
+        name, _, marketplace = key.partition("@")
+        for e in entries or []:
+            ip = e.get("installPath")
+            if ip:
+                out.append({
+                    "name": name, "marketplace": marketplace,
+                    "installPath": ip, "version": e.get("version", ""),
+                })
+    return out
+
+
+def _mcp_transport(cfg: dict) -> str:
+    return cfg.get("type") or ("http" if cfg.get("url") else "stdio")
+
+
+def scan_mcp_servers() -> list[dict]:
+    try:
+        data = json.loads(CLAUDE_JSON.read_text(encoding="utf-8", errors="ignore"))
+    except (OSError, json.JSONDecodeError):
+        return []
+    servers: dict[str, dict] = {}
+    for name, cfg in (data.get("mcpServers") or {}).items():
+        servers[name] = {
+            "name": name, "scope": "global", "transport": _mcp_transport(cfg),
+            "command": cfg.get("command", ""), "projects": [],
+        }
+    for ppath, pcfg in (data.get("projects") or {}).items():
+        label = Path(ppath).name or ppath
+        for name, cfg in (pcfg.get("mcpServers") or {}).items():
+            if name in servers:
+                s = servers[name]
+                if s["scope"] != "global" and label not in s["projects"]:
+                    s["projects"].append(label)
+            else:
+                servers[name] = {
+                    "name": name, "scope": "project", "transport": _mcp_transport(cfg),
+                    "command": cfg.get("command", ""), "projects": [label],
+                }
+    return sorted(
+        servers.values(),
+        key=lambda s: (0 if s["scope"] == "global" else 1, s["name"].lower()),
+    )
+
+
+def scan_skills() -> list[dict]:
+    out = []
+    sk_dir = CLAUDE_HOME / "skills"
+    if sk_dir.is_dir():
+        for child in sorted(sk_dir.iterdir()):
+            f = child / "SKILL.md"
+            if f.is_file():
+                fm = _read_frontmatter(f)
+                out.append({
+                    "name": fm.get("name", child.name),
+                    "desc": _short_desc(fm.get("description", "")),
+                    "source": "personal",
+                })
+    for plug in _installed_plugins():
+        skills_dir = Path(plug["installPath"]) / "skills"
+        if not skills_dir.is_dir():
+            continue
+        for child in sorted(skills_dir.iterdir()):
+            f = child / "SKILL.md"
+            if f.is_file():
+                fm = _read_frontmatter(f)
+                out.append({
+                    "name": fm.get("name", child.name),
+                    "desc": _short_desc(fm.get("description", "")),
+                    "source": "plugin",
+                })
+    return out
+
+
+def scan_plugins() -> list[dict]:
+    out = []
+    for p in _installed_plugins():
+        desc = PLUGIN_DESC.get(p["name"], "")
+        for cand in (
+            Path(p["installPath"]) / ".claude-plugin" / "plugin.json",
+            Path(p["installPath"]) / "plugin.json",
+        ):
+            if cand.is_file():
+                try:
+                    pj = json.loads(cand.read_text(encoding="utf-8", errors="ignore"))
+                    desc = pj.get("description") or desc
+                except (OSError, json.JSONDecodeError):
+                    pass
+                break
+        out.append({**p, "desc": _short_desc(desc)})
+    return sorted(out, key=lambda p: p["name"].lower())
+
+
+def scan_commands() -> list[dict]:
+    out = []
+    cmd_dir = CLAUDE_HOME / "commands"
+    if cmd_dir.is_dir():
+        for f in sorted(cmd_dir.glob("*.md")):
+            fm = _read_frontmatter(f)
+            desc = fm.get("description", "")
+            if not desc:
+                for line in f.read_text(encoding="utf-8", errors="ignore").splitlines():
+                    s = line.strip()
+                    if s and not s.startswith(("#", "---")):
+                        desc = s
+                        break
+            out.append({"name": f.stem, "desc": _short_desc(desc), "source": "personal"})
+    for plug in _installed_plugins():
+        cdir = Path(plug["installPath"]) / "commands"
+        if not cdir.is_dir():
+            continue
+        for f in sorted(cdir.glob("*.md")):
+            fm = _read_frontmatter(f)
+            out.append({
+                "name": f"{plug['name']}:{f.stem}",
+                "desc": _short_desc(fm.get("description", "")),
+                "source": "plugin",
+            })
+    return out
+
+
+def _npm_globals() -> list[str]:
+    skip = {"npm", "corepack", "npx"}
+    candidates = [
+        Path("/opt/homebrew/lib/node_modules"),
+        Path("/usr/local/lib/node_modules"),
+        Path.home() / ".npm-global" / "lib" / "node_modules",
+    ]
+    for d in candidates:
+        if not d.is_dir():
+            continue
+        pkgs = []
+        for entry in sorted(d.iterdir()):
+            nm = entry.name
+            if nm.startswith("."):
+                continue
+            if nm.startswith("@"):
+                for sub in sorted(entry.iterdir()):
+                    if sub.is_dir() and not sub.name.startswith("."):
+                        pkgs.append(f"{nm}/{sub.name}")
+            elif nm not in skip:
+                pkgs.append(nm)
+        return pkgs
+    return []
+
+
+def scan_clis() -> list[dict]:
+    out: list[dict] = []
+    seen: set[str] = set()
+    order = {"brew": 0, "cask": 1, "npm": 2, "local": 3}
+
+    def add(name: str, source: str) -> None:
+        key = name.lower()
+        if key in seen:
+            return
+        seen.add(key)
+        out.append({"name": name, "source": source, "desc": CLI_DESC.get(name, "")})
+
+    for f in _run(["brew", "leaves"]):
+        add(f.split("/")[-1], "brew")          # strip tap prefix (oven-sh/bun/bun)
+    for c in _run(["brew", "list", "--cask"]):
+        add(c, "cask")
+    for pkg in _npm_globals():
+        add(pkg, "npm")
+    if shutil.which("claude"):
+        add("claude", "local")
+
+    out.sort(key=lambda c: (order.get(c["source"], 9), c["name"].lower()))
+    return out
+
+
+def scan_toolkit() -> dict:
+    return {
+        "mcp": scan_mcp_servers(),
+        "skills": scan_skills(),
+        "plugins": scan_plugins(),
+        "commands": scan_commands(),
+        "clis": scan_clis(),
+    }
+
+
+# ─── Toolkit renderer ───────────────────────────────────────────────────────
+
+def _kit_tag(label: str) -> str:
+    return f'<span class="build-tag">{html.escape(label)}</span>'
+
+
+def _kit_row(name: str, tags: list[str], desc: str = "", detail: str = "") -> str:
+    head = (
+        '<div class="kit-head">'
+        f'<strong>{html.escape(name)}</strong>'
+        + "".join(_kit_tag(t) for t in tags if t)
+        + "</div>"
+    )
+    body = f'<div class="kit-desc">{html.escape(desc)}</div>' if desc else ""
+    foot = f'<code class="kit-detail">{html.escape(detail)}</code>' if detail else ""
+    return f'<li class="kit-row">{head}{body}{foot}</li>'
+
+
+def render_toolkit_html(kit: dict) -> tuple[str, str]:
+    """Return (toc_html, body_html). Empty sections are skipped; an all-empty
+    toolkit (e.g. no coding-agent setup on this machine) shows a quiet note."""
+    sections: list[tuple[str, str, str, str, str]] = []  # title, anchor, color, summary, rows
+
+    mcp = kit["mcp"]
+    if mcp:
+        n_global = sum(1 for s in mcp if s["scope"] == "global")
+        rows = "".join(
+            _kit_row(s["name"], [s["scope"], s["transport"]],
+                     MCP_DESC.get(s["name"], ""), s["command"])
+            for s in mcp
+        )
+        summary = f'{len(mcp)} servers · {n_global} global · {len(mcp) - n_global} project'
+        sections.append(("MCP servers", "mcp-servers", "COOL", summary, rows))
+
+    skills = kit["skills"]
+    if skills:
+        n_pers = sum(1 for s in skills if s["source"] == "personal")
+        rows = "".join(_kit_row(s["name"], [s["source"]], s["desc"]) for s in skills)
+        summary = f'{len(skills)} skills · {n_pers} personal'
+        if len(skills) - n_pers:
+            summary += f' · {len(skills) - n_pers} from plugins'
+        sections.append(("Skills", "skills", "VIBRANT", summary, rows))
+
+    plugins = kit["plugins"]
+    if plugins:
+        rows = "".join(
+            _kit_row(p["name"],
+                     [f'v{p["version"]}' if p["version"] else "", p.get("marketplace", "")],
+                     p["desc"])
+            for p in plugins
+        )
+        sections.append(("Plugins", "plugins", "TWILIGHT", f'{len(plugins)} installed', rows))
+
+    commands = kit["commands"]
+    if commands:
+        rows = "".join(_kit_row(f'/{c["name"]}', [c["source"]], c["desc"]) for c in commands)
+        sections.append(("Commands", "commands", "SUNSET", f'{len(commands)} commands', rows))
+
+    clis = kit["clis"]
+    if clis:
+        counts: dict[str, int] = {}
+        for c in clis:
+            counts[c["source"]] = counts.get(c["source"], 0) + 1
+        rows = "".join(_kit_row(c["name"], [c["source"]], c["desc"]) for c in clis)
+        bits = " · ".join(f'{n} {src}' for src, n in counts.items())
+        sections.append(("CLIs", "clis", "FOREST", f'{len(clis)} CLIs · {bits}', rows))
+
+    intro = (
+        '<p class="kit-intro">Everything wired into your coding agent on this '
+        'machine — scanned fresh on each rebuild.</p>'
+    )
+    if not sections:
+        return "", intro + (
+            '<p class="kit-empty">Nothing detected yet. This tab fills in once you '
+            'have MCP servers, skills or CLIs installed (e.g. via Claude Code or '
+            'Homebrew).</p>'
+        )
+
+    toc = "\n".join(
+        f'<a href="#{anchor}">{dot_html(color)}{html.escape(title)}</a>'
+        for title, anchor, color, _, _ in sections
+    )
+    body = intro + "\n".join(
+        f'<h2 id="{anchor}">{dot_html(color)}{html.escape(title)}</h2>'
+        f'<p class="build-summary">{html.escape(summary)}</p>'
+        f'<ul class="kit">{rows}</ul>'
+        for title, anchor, color, summary, rows in sections
+    )
+    return toc, body
+
+
+def render_toolkit_md(kit: dict) -> str:
+    lines = [
+        "# Toolkit",
+        "",
+        "_Auto-generated by `build.py`. Edits will be overwritten — install or "
+        "remove the actual MCP server, skill, plugin, command or CLI instead._",
+        "",
+    ]
+
+    def section(title: str, items: list[str]) -> None:
+        if not items:
+            return
+        lines.append(f"## {title}")
+        lines.append("")
+        lines.extend(items)
+        lines.append("")
+
+    section("MCP servers", [
+        "- **{name}** — {scope} · {transport}{cmd}{desc}".format(
+            name=s["name"], scope=s["scope"], transport=s["transport"],
+            cmd=f' · `{s["command"]}`' if s["command"] else "",
+            desc=f' — {MCP_DESC[s["name"]]}' if s["name"] in MCP_DESC else "",
+        ) for s in kit["mcp"]
+    ])
+    section("Skills", [
+        "- **{name}** ({source}){desc}".format(
+            name=s["name"], source=s["source"],
+            desc=f' — {s["desc"]}' if s["desc"] else "",
+        ) for s in kit["skills"]
+    ])
+    section("Plugins", [
+        "- **{name}** v{ver} ({mkt}){desc}".format(
+            name=p["name"], ver=p["version"], mkt=p["marketplace"],
+            desc=f' — {p["desc"]}' if p["desc"] else "",
+        ) for p in kit["plugins"]
+    ])
+    section("Commands", [
+        "- **/{name}** ({source}){desc}".format(
+            name=c["name"], source=c["source"],
+            desc=f' — {c["desc"]}' if c["desc"] else "",
+        ) for c in kit["commands"]
+    ])
+    section("CLIs", [
+        "- **{name}** ({source}){desc}".format(
+            name=c["name"], source=c["source"],
+            desc=f' — {c["desc"]}' if c["desc"] else "",
+        ) for c in kit["clis"]
+    ])
     return "\n".join(lines).rstrip() + "\n"
 
 
@@ -1074,6 +1513,48 @@ HTML_SHELL = """<!doctype html>
     ul.builds .build-path {{ margin-left: 0; flex-basis: 100%; }}
   }}
 
+  /* ─── Toolkit tab ─── */
+  .kit-intro {{
+    font-family: var(--font-mono);
+    font-size: 12px;
+    color: var(--color-ash-gray);
+    margin: 0 0 8px;
+    max-width: 620px;
+    line-height: 1.5;
+  }}
+  .kit-intro + h2 {{ margin-top: 36px; }}
+  .kit-empty {{ color: var(--color-ash-gray); font-size: 14px; line-height: 1.5; max-width: 560px; }}
+  ul.kit {{ margin: 0; padding: 0; }}
+  ul.kit li.kit-row {{
+    display: block;
+    padding: 13px 0;
+    border-bottom: 1px solid var(--color-stormy-night);
+  }}
+  ul.kit li.kit-row:last-child {{ border-bottom: none; }}
+  .kit-head {{
+    display: flex;
+    align-items: baseline;
+    flex-wrap: wrap;
+    gap: 9px;
+  }}
+  .kit-head strong {{ color: var(--color-cloud-white); font-weight: 500; }}
+  .kit-desc {{
+    color: var(--color-ash-gray);
+    font-size: 13px;
+    line-height: 1.45;
+    margin-top: 3px;
+  }}
+  .kit-detail {{
+    display: inline-block;
+    margin-top: 5px;
+    font-family: var(--font-mono);
+    font-size: 11px;
+    color: var(--color-ash-gray);
+    background: transparent;
+    box-shadow: none;
+    padding: 0;
+  }}
+
   /* ─── Daily quote ─── */
   .quote-block {{
     margin: 0 0 40px;
@@ -1144,7 +1625,9 @@ HTML_SHELL = """<!doctype html>
       <button class="tab" data-target="view-projects" role="tab">Projects</button>
       <button class="tab" data-target="view-ideas" role="tab">Ideas</button>
       <button class="tab" data-target="view-learning" role="tab">Learning</button>
+      <button class="tab" data-target="view-subscriptions" role="tab">Subscriptions</button>
       <button class="tab" data-target="view-builds" role="tab">Builds</button>
+      <button class="tab" data-target="view-toolkit" role="tab">Toolkit</button>
       <button class="tab" data-target="view-changelog" role="tab">Changelog</button>
     </nav>
 
@@ -1182,9 +1665,27 @@ HTML_SHELL = """<!doctype html>
       </main>
     </section>
 
+    <section id="view-subscriptions" class="view" role="tabpanel" hidden>
+      <nav class="toc">
+        {subscriptions_toc}
+      </nav>
+      <main>
+        {subscriptions_body}
+      </main>
+    </section>
+
     <section id="view-builds" class="view" role="tabpanel" hidden>
       <main>
         {builds_body}
+      </main>
+    </section>
+
+    <section id="view-toolkit" class="view" role="tabpanel" hidden>
+      <nav class="toc">
+        {toolkit_toc}
+      </nav>
+      <main>
+        {toolkit_body}
       </main>
     </section>
 
@@ -1221,7 +1722,7 @@ HTML_SHELL = """<!doctype html>
 
     // Initial state: URL hash > localStorage > default dashboard
     const hash = location.hash.replace('#', '');
-    const valid = ['view-dashboard', 'view-projects', 'view-ideas', 'view-learning', 'view-builds', 'view-changelog'];
+    const valid = ['view-dashboard', 'view-projects', 'view-ideas', 'view-learning', 'view-subscriptions', 'view-builds', 'view-toolkit', 'view-changelog'];
     let initial = 'view-dashboard';
     if (valid.includes('view-' + hash)) initial = 'view-' + hash;
     else {{
@@ -1259,6 +1760,7 @@ def main() -> None:
     learn_md = LEARN_SRC.read_text(encoding="utf-8")
     ideas_md = IDEAS_SRC.read_text(encoding="utf-8")
     proj_md = PROJ_SRC.read_text(encoding="utf-8")
+    subs_md = SUBS_SRC.read_text(encoding="utf-8")
 
     # Header date comes from changelog, not from a hand-maintained line.
     updated = latest_changelog_date(log_md) or "—"
@@ -1270,19 +1772,26 @@ def main() -> None:
     learn_md = re.sub(r"^# Learning\s*\n+", "", learn_md, count=1)
     ideas_md = re.sub(r"^# Ideas\s*\n+", "", ideas_md, count=1)
     proj_md = re.sub(r"^# Projects\s*\n+", "", proj_md, count=1)
+    subs_md = re.sub(r"^# Subscriptions\s*\n+", "", subs_md, count=1)
 
     dashboard_body, dashboard_toc = md_to_html(dash_md)
     changelog_body, _ = md_to_html(log_md)
     learning_body, learning_toc = md_to_html(learn_md)
     ideas_body, _ = md_to_html(ideas_md)
     projects_body, projects_toc = md_to_html(proj_md)
+    subscriptions_body, subscriptions_toc = md_to_html(subs_md)
     nav = build_toc(dashboard_toc, level=2)
     learning_nav = build_toc(learning_toc, level=3)
     projects_nav = build_toc(projects_toc, level=2)
+    subscriptions_nav = build_toc(subscriptions_toc, level=2)
     quote_block = render_quote_block(pick_quote_for_today(load_quotes()))
     builds = scan_builds()
     builds_body = render_builds_html(builds)
     BUILDS_OUT.write_text(render_builds_md(builds), encoding="utf-8")
+
+    kit = scan_toolkit()
+    toolkit_toc, toolkit_body = render_toolkit_html(kit)
+    TOOLKIT_OUT.write_text(render_toolkit_md(kit), encoding="utf-8")
 
     OUT.write_text(
         HTML_SHELL.format(
@@ -1294,7 +1803,11 @@ def main() -> None:
             projects_body=projects_body,
             ideas_body=ideas_body,
             learning_body=learning_body,
+            subscriptions_toc=subscriptions_nav,
+            subscriptions_body=subscriptions_body,
             builds_body=builds_body,
+            toolkit_toc=toolkit_toc,
+            toolkit_body=toolkit_body,
             changelog_body=changelog_body,
             quote_block=quote_block,
         ),

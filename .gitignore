@@ -1,0 +1,12 @@
+# Generated output — produced by build.py, never committed
+dashboard.html
+
+# Auto-generated mirrors land in the vault, but ignore them here too if anyone
+# runs the build from inside this folder
+builds.md
+toolkit.md
+
+# macOS / Python noise
+.DS_Store
+__pycache__/
+*.pyc

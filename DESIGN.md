@@ -46,16 +46,20 @@ Unrecognised headings get no dot, not a default colour — that's intentional; n
 
 ## Tabs
 
-Six tabs, in this order:
+Eight tabs, in this order:
 
 1. **Dashboard** — Now + Check-ins
 2. **Projects** — Overview + Active + Idle / Resumable
 3. **Ideas**
 4. **Learning**
-5. **Builds** — auto-generated
-6. **Changelog**
+5. **Subscriptions**
+6. **Builds** — auto-scanned
+7. **Toolkit** — auto-scanned
+8. **Changelog**
 
 Don't reorder. Dashboard is where the user lands every time, so it must be tab one.
+
+**Builds** and **Toolkit** have no markdown source. They scan the machine on each rebuild and render themselves. Both degrade quietly: Builds with no code folder shows a one-line note, and Toolkit on a machine with no coding-agent setup shows a quiet empty state rather than an error. Everything else is markdown-backed, one source file per tab.
 
 ## Now
 
@@ -106,6 +110,12 @@ Sub-section order matters — it's a rough flow from "actively engaged" → "que
 
 Each item is one line, link-first where possible: `- [Title](url) — one-sentence context.`
 
+## Subscriptions
+
+- A plain markdown tab. `## Status`, `## Monthly estimate`, `## To check / cancel`, then an `## Active` list.
+- Each row is one line: `- **Name** — monthly/yearly, amount; renews <date>; <card>.`
+- The point is a single glanceable run-rate, not an accounting ledger. Keep it scannable.
+
 ## Builds
 
 Auto-generated. The renderer:
@@ -118,6 +128,18 @@ Auto-generated. The renderer:
 
 Don't edit `builds.md` by hand. To change what's listed, fix the underlying repo's `README.md` or git remote.
 
+## Toolkit
+
+Auto-generated. Surfaces the otherwise-invisible coding-agent environment so the user can actually see what they have. The renderer:
+
+1. Reads `~/.claude.json` for configured MCP servers (global + per-project)
+2. Reads `~/.claude/skills/` and installed-plugin skills (name + description from each `SKILL.md`)
+3. Reads installed plugins, personal slash-commands, and CLIs (`brew leaves`, `brew --cask`, global npm packages, `claude`)
+4. Groups into **MCP servers / Skills / Plugins / Commands / CLIs**, hiding any section that's empty
+5. Writes the result to `Suma/toolkit.md` AND renders it into the dashboard
+
+Rows reuse the calm `build-tag` chip for scope/source (e.g. `global`, `personal`, `brew`) — muted, not coloured. Don't add coloured status chips here. If the whole toolkit is empty (no agent setup on this machine), the tab shows one quiet line instead of an error. Don't edit `toolkit.md` by hand; install or remove the actual tool instead.
+
 ## Changelog
 
 - Newest day at the top.
@@ -125,6 +147,13 @@ Don't edit `builds.md` by hand. To change what's listed, fix the underlying repo
 - Bullets are plain: `- **Project** what changed in plain language.`
 - No timestamps within a day — order within a date doesn't need to be precise.
 - The rendered header on the Changelog tab auto-derives "last updated" from the most recent date heading.
+
+## Daily quote
+
+- One quote sits quietly above Now on the Dashboard, in muted italic. It's the one bit of personality on the page.
+- Source is `Suma/quotes.md`: quote then `— Attribution`, blank line between entries. Headings and `---` rules are ignored, so the file can be grouped into categories.
+- The renderer picks one per day deterministically (rotates by date), so it's stable within a day and changes tomorrow. No randomness, no API.
+- Optional. No file means no quote, not an error. Keep it calm — don't make it big, boxed, or coloured.
 
 ## Plain language rule (this applies to every tab)
 
