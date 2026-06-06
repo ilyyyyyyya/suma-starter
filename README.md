@@ -50,30 +50,28 @@ Most tabs map to one source file in `sources/`. Builds and Toolkit have no sourc
 
 ## How it works
 
-1. You keep a folder of markdown files somewhere on disk (the "vault").
-2. Inside the vault, a `Suma/` subfolder holds the markdown source files above.
-3. A Python script in a sibling code folder (`~/Desktop/code/12-suma/build.py`) reads those `.md` files and writes a single `dashboard.html` next to itself.
-4. You double-click `dashboard.html` to view it. No server needed.
+Suma is just one folder in your vault. The markdown sources and the renderer live together, and the dashboard is generated right alongside them.
 
-The vault and the renderer must live as **siblings**:
+1. You keep a folder of markdown files somewhere on disk (your "vault").
+2. Inside it, a `Suma/` folder holds the source `.md` files **and** `build.py`.
+3. Run `python3 build.py`. It reads the `.md` files next to it and writes `dashboard.html` in the same folder.
+4. Double-click `dashboard.html` to view it. No server needed.
 
 ```
-~/Desktop/
-├── vault/                ← your markdown lives here
-│   └── Suma/
-│       ├── dashboard.md
-│       ├── projects.md
-│       ├── ideas.md
-│       ├── learning.md
-│       ├── subscriptions.md
-│       └── changelog.md
-└── code/
-    └── 12-suma/
-        ├── build.py
-        └── dashboard.html   ← generated, you open this
+your-vault/
+└── Suma/
+    ├── build.py          ← the renderer
+    ├── dashboard.md
+    ├── projects.md
+    ├── ideas.md
+    ├── learning.md
+    ├── subscriptions.md
+    ├── changelog.md
+    ├── quotes.md
+    └── dashboard.html     ← generated, you open this
 ```
 
-The `12-` prefix is just Ilya's habit of numbering project folders alphabetically. The agent can rename it; just make sure to update the path inside `build.py`.
+No separate code folder, no sibling paths, no config to edit. Drop the kit's `build.py` and `sources/*.md` into `Suma/`, run it, open the dashboard.
 
 ---
 
