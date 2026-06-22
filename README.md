@@ -1,5 +1,7 @@
 # Suma Starter
 
+![The Suma dashboard](preview.png)
+
 A starter kit for a personal dashboard system called **Suma**. Hand this folder to an AI coding agent (Claude Code, Cursor, etc.) and ask it to set up Suma for you.
 
 Suma is markdown-in, HTML-out. You edit a handful of `.md` files in a "vault" folder, run one script, and get a clean single-page dashboard you double-click to open. No server. No app. No database. No `pip install`.
