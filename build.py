@@ -1481,19 +1481,16 @@ def render_activity_html(counts: dict[_dt.date, int], today: _dt.date) -> str:
     )
 
 
-def favicon_data_uri() -> str:
-    """A generic Suma mark — a vibrant gradient dot on a rounded near-black tile,
-    as an inline SVG data URI. Matches the section-dot identity; no asset file."""
+def favicon_data_uri(logo_inner: str) -> str:
+    """Suma wordmark on a rounded near-black tile, as an inline SVG data URI."""
+    scale = 76 / 2061
+    ty = (100 - 586 * scale) / 2
     svg = (
         '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 100 100">'
-        '<defs><linearGradient id="g" x1="0" y1="0" x2="1" y2="1">'
-        '<stop offset="0" stop-color="#b8ff45"/>'
-        '<stop offset="0.35" stop-color="#ffcb45"/>'
-        '<stop offset="1" stop-color="#ff00b8"/>'
-        "</linearGradient></defs>"
         '<rect width="100" height="100" rx="22" fill="#0b0b0b"/>'
-        '<circle cx="50" cy="50" r="22" fill="url(#g)"/>'
-        "</svg>"
+        f'<g transform="translate(12 {ty:.2f}) scale({scale:.5f})" fill="#f7f7f7">'
+        + logo_inner +
+        "</g></svg>"
     )
     b64 = base64.b64encode(svg.encode("utf-8")).decode("ascii")
     return "data:image/svg+xml;base64," + b64
@@ -1607,13 +1604,14 @@ HTML_SHELL = """<!doctype html>
     margin-bottom: 28px;
   }}
   header h1 {{
-    font-family: var(--font-body);
-    font-size: 42px;
-    font-weight: 500;
-    letter-spacing: -1.05px;
-    line-height: 1.08;
     margin: 0;
+    line-height: 0;
     color: var(--color-cloud-white);
+  }}
+  header h1 svg {{
+    display: block;
+    height: 34px;
+    width: auto;
   }}
   header h1 a {{
     color: inherit;
@@ -1661,6 +1659,72 @@ HTML_SHELL = """<!doctype html>
   .theme-toggle .icon-sun {{ display: none; }}
   :root[data-theme="dark"] .theme-toggle .icon-moon {{ display: none; }}
   :root[data-theme="dark"] .theme-toggle .icon-sun {{ display: block; }}
+
+  /* ─── World clock ─── */
+  nav.worldclock {{
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(190px, 1fr));
+    gap: 12px;
+    margin: 0 0 16px;
+  }}
+  nav.worldclock .clock {{
+    display: flex;
+    flex-direction: column;
+    justify-content: space-between;
+    gap: 26px;
+    min-height: 124px;
+    padding: 20px 22px;
+    background: var(--color-stormy-night);
+    border-radius: 18px;
+  }}
+  nav.worldclock .clock.is-primary {{
+    background: var(--color-cloud-white);
+  }}
+  nav.worldclock .clock-top,
+  nav.worldclock .clock-bottom {{
+    display: flex;
+    justify-content: space-between;
+    gap: 10px;
+  }}
+  nav.worldclock .clock-top {{ align-items: baseline; }}
+  nav.worldclock .clock-bottom {{ align-items: flex-end; }}
+  nav.worldclock .city {{
+    font-family: var(--font-body);
+    font-size: 17px;
+    font-weight: 500;
+    letter-spacing: -0.3px;
+    color: var(--color-cloud-white);
+  }}
+  nav.worldclock .offset {{
+    font-family: var(--font-mono);
+    font-size: 12px;
+    color: var(--color-ash-gray);
+    white-space: nowrap;
+  }}
+  nav.worldclock .time {{
+    font-family: var(--font-body);
+    font-size: 34px;
+    font-weight: 500;
+    line-height: 1;
+    letter-spacing: -1.4px;
+    color: var(--color-cloud-white);
+    font-variant-numeric: tabular-nums;
+  }}
+  nav.worldclock .daynight {{
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+    font-size: 13px;
+    color: var(--color-ash-gray);
+    white-space: nowrap;
+  }}
+  nav.worldclock .daynight svg {{ width: 15px; height: 15px; display: block; }}
+  nav.worldclock .ico-sun {{ color: #e8a93a; }}
+  nav.worldclock .ico-moon {{ color: #d8c47e; }}
+  nav.worldclock .clock.is-primary .city,
+  nav.worldclock .clock.is-primary .time {{ color: var(--color-midnight-ink); }}
+  nav.worldclock .clock.is-primary .offset {{ color: var(--color-midnight-ink); opacity: 0.5; }}
+  nav.worldclock .clock.is-primary .daynight {{ color: var(--color-midnight-ink); opacity: 0.6; }}
 
   /* ─── Tabs ─── */
   nav.tabs {{
@@ -2326,7 +2390,7 @@ HTML_SHELL = """<!doctype html>
   @media (max-width: 720px) {{
     .wrap {{ padding: 40px 20px 80px; }}
     header {{ flex-direction: column; gap: 8px; align-items: flex-start; }}
-    header h1 {{ font-size: 32px; letter-spacing: -0.8px; }}
+    header h1 svg {{ height: 28px; }}
     nav.tabs {{ margin-bottom: 28px; }}
     nav.toc {{ margin-bottom: 28px; }}
     h2 {{ font-size: 20px; letter-spacing: -0.5px; margin: 40px 0 16px; }}
@@ -2349,7 +2413,7 @@ HTML_SHELL = """<!doctype html>
 <body>
   <div class="wrap">
     <header>
-      <h1><a class="logo-home" href="#dashboard" aria-label="Back to dashboard">Suma</a></h1>
+      <h1 aria-label="Suma"><a class="logo-home" href="#dashboard" aria-label="Back to dashboard"><svg viewBox="0 0 2061 586" fill="currentColor" xmlns="http://www.w3.org/2000/svg" role="img" aria-hidden="true"><path d="M1798.42 14.1171C1857.95 8.24407 1924.54 22.2031 1971.88 59.2761C2066.58 133.586 2073.12 274.174 2047.09 382.368C2033.62 438.383 1994.2 563.118 1925.02 571.378C1909.6 573.278 1894.09 568.808 1882.04 559.008C1833.16 519.808 1890.33 469.148 1886.49 442.401C1886.03 439.208 1884.51 435.831 1881.8 433.927C1879.78 432.509 1876.82 432.046 1874.43 432.553C1848.85 437.984 1777.26 560.188 1706.43 576.078C1685.46 580.788 1663.49 578.998 1645.12 567.168C1618.23 549.838 1621.17 533.24 1615.24 506.417C1613.83 500.018 1610.93 492.797 1605.01 489.354C1582.51 476.244 1539.15 527.427 1522.89 540.038C1510.59 549.578 1497 557.478 1481.89 561.568C1461.44 567.108 1440.85 564.848 1422.5 554.068C1405.63 544.154 1394.55 528.65 1388.4 510.263C1370.14 455.632 1391.39 393.483 1399.11 338.715C1401.7 320.347 1403.98 300.306 1399.19 282.146C1396.89 273.455 1394.09 266.314 1385.76 261.786C1380.31 258.826 1374.27 258.565 1368.38 260.287C1357.49 263.473 1349.68 272.991 1344.25 282.452C1300.84 358.014 1379.31 471.904 1336.93 550.088C1329.48 563.838 1318.73 574.698 1303.47 579.138C1289.36 583.238 1274.79 581.848 1261.99 574.608C1245.98 565.548 1235.36 550.918 1228.77 533.972C1205.57 474.357 1228.73 399.873 1237.64 339.373C1241.24 314.909 1244.17 288.432 1237.34 264.237C1235.28 256.909 1232.26 248.07 1225.12 244.331C1221.43 242.401 1217.37 242.023 1213.4 243.313C1186.13 252.167 1196.05 324.272 1197.5 347.247C1198.55 363.962 1199.86 381.03 1198.64 397.758C1196.06 433.237 1188.2 467.081 1171.81 498.845C1155.48 530.49 1131.06 558.298 1096.1 569.248C1073.27 576.398 1046.87 575.858 1025.45 564.608C987.152 544.494 981.442 505.928 982.402 466.723C982.642 456.889 984.102 443.491 980.822 434.208C979.592 430.717 976.852 427.275 973.332 425.894C949.292 416.456 910.062 495.695 900.892 511.111C894.462 521.914 887.552 532.603 879.582 542.339C867.492 557.098 853.102 569.118 835.352 576.428C802.522 589.938 762.772 586.788 730.552 572.958C683.957 552.978 660.056 515.985 661.078 465.459C661.512 443.955 664.989 422.928 663.593 401.316C661.911 375.253 654.088 349.795 642.427 326.508C634.455 310.361 624.059 295.529 611.601 282.526C605.658 276.466 599.325 270.8 592.643 265.565C583.8 258.524 562.195 245.456 559.145 235.474C554.104 215.288 585.145 220.238 595.471 219.82C639.469 218.039 648.844 154.161 660.054 120.8C664.855 106.243 671.105 92.2041 678.709 78.8951C698.762 45.5011 731.932 18.1031 773.032 21.8171C793.282 23.6351 811.912 33.6321 824.622 49.4991C838.392 66.3771 845.302 87.7721 847.462 109.059C854.212 172.031 819.182 222.98 785.582 272.942C763.622 305.041 734.562 361.108 763.572 396.785C787.202 425.851 828.292 415.036 852.382 392.722C888.862 358.926 906.102 310.483 904.502 261.388C903.652 235.322 898.722 209.206 900.622 183.395C904.072 139.448 924.822 98.6661 958.312 69.9991C988.372 44.2711 1040.82 30.369 1069.17 66.394C1110.4 118.768 1058.46 192.229 1036.73 241.989C1026.22 266.055 1016.22 291.315 1013.77 317.817C1011.51 339.006 1012.69 386.524 1042.24 390.551C1059.61 392.399 1067.23 366.952 1068.92 354.582C1078.97 281.103 1084.78 212.795 1122.14 146.556C1141.15 112.855 1157.65 88.1761 1185.56 60.2731C1217.03 28.8121 1268.61 11.1121 1302.74 48.7291C1310.88 57.8111 1316.11 69.1201 1317.76 81.2001C1324.62 128.208 1288.1 159.134 1283.59 203.248C1282 218.792 1295.21 222.442 1302.92 208.581C1306.22 202.908 1309.06 196.823 1311.81 190.818C1338.36 132.726 1412.19 46.8931 1480.83 46.4361C1506.65 46.1421 1531.51 56.1991 1549.86 74.3611C1595.71 120.27 1584.04 193.65 1561.95 247.708C1542.71 294.799 1516.38 337.28 1494.21 382.87C1488.49 394.636 1474.41 424.031 1486.15 434.377C1488.17 436.161 1490.82 437.055 1493.51 436.855C1514.33 435.411 1543.82 365.565 1556.59 346.629C1567.78 330.049 1572.37 320.257 1586.34 303.314C1626.58 254.497 1678.63 226.775 1741.22 218.503C1762.24 215.725 1781.42 215.77 1802.33 214.032C1832.16 211.552 1856.1 198.387 1874.99 175.082C1884.46 165.241 1899.13 133.457 1895.93 119.907C1883.59 67.562 1814.15 130.694 1793.62 144.891C1778.89 155.076 1771.72 161.282 1758.74 168.989C1736.69 182.084 1716.67 191.569 1691.19 194.968C1656.72 200.09 1616.58 181.223 1611.56 143.906C1608.81 123.451 1620.35 100.186 1633.77 84.793C1674.24 38.372 1739.45 20.5921 1798.42 14.1171ZM1786.6 419.33C1817.46 415.064 1842.78 390.571 1861.1 366.141C1879.73 341.299 1902.28 302.829 1899.41 270.621C1898.14 256.299 1885.27 249.017 1871.84 249.769C1837.43 256.021 1804.9 291.117 1785.22 319.214C1770.11 340.781 1740.78 392.625 1769.94 413.9C1774.46 417.202 1781.01 418.986 1786.6 419.33Z"/><path d="M438.291 0C489.498 0.544 519.96 8.084 565.133 39.41C623.352 79.783 653.435 181.957 560.924 201.215C527.787 206.396 492.528 177.444 469.464 155.163C440.973 127.641 378.822 132.014 384.007 175.768C388.174 210.933 477.113 228.108 510.684 240.764C530.205 247.951 548.653 257.77 565.516 269.951C604.824 298.676 627.695 339.405 635.547 387.776C646.272 453.844 618.285 531.604 552.156 557.858C494.247 580.848 459.168 543.572 410.846 522.608C390.684 513.709 368.834 509.284 346.798 509.637C287.785 510.491 237.352 540.934 176.75 550.158C169.28 551.198 161.757 551.808 154.218 551.988C113.591 553.038 77.9899 538.596 48.7319 510.741C18.9169 482.485 1.42987 443.623 0.0568668 402.569C-1.03113 364.219 13.5319 327.078 40.3959 299.688C62.5499 276.702 91.8398 261.105 122.804 253.892C224.415 230.219 303.883 295.709 389.288 338.506C408.192 347.498 427.449 357.433 448.866 357.491C473.981 357.105 485.139 332.649 473.938 311.686C461.838 289.043 436.759 278.685 413.491 271.156C394.344 264.96 373.406 261.002 353.634 256.801C299.737 246.595 210.811 227.58 209.822 157.545C208.649 74.394 313.961 19.483 384.503 5.99899C403.66 2.33699 419.42 0.808 438.291 0Z"/></svg></a></h1>
       <div class="header-right">
         <span class="meta">Updated {updated}</span>
         <button class="theme-toggle" type="button" aria-label="Toggle theme" title="Toggle theme">
@@ -2371,6 +2435,7 @@ HTML_SHELL = """<!doctype html>
     </nav>
 
     <section id="view-dashboard" class="view" role="tabpanel">
+      <nav class="worldclock" id="worldclock" aria-label="World clock"></nav>
       {quote_block}
       <div class="widget-row">
         <section class="cal-widget" id="calwidget" aria-label="Calendar"></section>
@@ -2499,6 +2564,49 @@ HTML_SHELL = """<!doctype html>
 </script>
 
 <script>
+  /* World clock — live local time across cities, refreshed every 10s. */
+  (function () {{
+    const cities = [
+      {{ name: 'San Francisco', tz: 'America/Los_Angeles' }},
+      {{ name: 'New York', tz: 'America/New_York', primary: true }},
+      {{ name: 'London', tz: 'Europe/London' }}
+    ];
+    const SUN = '<svg class="ico-sun" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" aria-hidden="true"><circle cx="8" cy="8" r="3"/><line x1="8" y1="1.4" x2="8" y2="3"/><line x1="8" y1="13" x2="8" y2="14.6"/><line x1="1.4" y1="8" x2="3" y2="8"/><line x1="13" y1="8" x2="14.6" y2="8"/><line x1="3.4" y1="3.4" x2="4.6" y2="4.6"/><line x1="11.4" y1="11.4" x2="12.6" y2="12.6"/><line x1="3.4" y1="12.6" x2="4.6" y2="11.4"/><line x1="11.4" y1="4.6" x2="12.6" y2="3.4"/></svg>';
+    const MOON = '<svg class="ico-moon" viewBox="0 0 16 16" fill="currentColor" aria-hidden="true"><path d="M6.1 1.6a6 6 0 1 0 8.3 8.3 5 5 0 0 1-8.3-8.3z"/></svg>';
+    const el = document.getElementById('worldclock');
+    if (!el) return;
+    function offsetLabel(tz, now) {{
+      try {{
+        const parts = new Intl.DateTimeFormat('en-GB', {{ timeZone: tz, timeZoneName: 'shortOffset' }}).formatToParts(now);
+        const p = parts.find(function (x) {{ return x.type === 'timeZoneName'; }});
+        let v = (p ? p.value : 'GMT').replace('GMT', 'UTC');
+        return v === 'UTC' ? 'UTC+0' : v;
+      }} catch (e) {{ return ''; }}
+    }}
+    function render() {{
+      const now = new Date();
+      el.innerHTML = cities.map(function (c) {{
+        let t = '--:--', hour = 12;
+        try {{
+          t = new Intl.DateTimeFormat('en-GB', {{ timeZone: c.tz, hour: '2-digit', minute: '2-digit', hourCycle: 'h23' }}).format(now);
+          hour = +new Intl.DateTimeFormat('en-GB', {{ timeZone: c.tz, hour: '2-digit', hourCycle: 'h23' }}).format(now);
+        }} catch (e) {{}}
+        const day = hour >= 6 && hour < 18;
+        return '<div class="clock' + (c.primary ? ' is-primary' : '') + '">' +
+                 '<div class="clock-top"><span class="city">' + c.name + '</span>' +
+                 '<span class="offset">' + offsetLabel(c.tz, now) + '</span></div>' +
+                 '<div class="clock-bottom"><span class="time">' + t + '</span>' +
+                 '<span class="daynight">' + (day ? SUN : MOON) +
+                 '<span>' + (day ? 'Day' : 'Night') + '</span></span></div>' +
+               '</div>';
+      }}).join('');
+    }}
+    render();
+    setInterval(render, 10000);
+  }})();
+</script>
+
+<script>
   /* Calendar — current month with today marked, Monday-first. Rendered live. */
   (function () {{
     const el = document.getElementById('calwidget');
@@ -2607,7 +2715,8 @@ def main() -> None:
         _t, _a = split_quote(_q)
         quotes_parsed.append({"t": _t or _q.strip(), "a": _a or ""})
     quotes_json = json.dumps(quotes_parsed, ensure_ascii=False).replace("</", "<\\/")
-    favicon = favicon_data_uri()
+    logo_m = re.search(r'<svg viewBox="0 0 2061 586"[^>]*>(.*?)</svg>', HTML_SHELL, re.S)
+    favicon = favicon_data_uri(logo_m.group(1) if logo_m else "")
     builds = scan_builds()
     builds_body = render_builds_html(builds)
     BUILDS_OUT.write_text(render_builds_md(builds), encoding="utf-8")

@@ -94,6 +94,11 @@ Don't reorder. Dashboard is where the user lands every time, so it must be tab o
 - Renders as the same calm card style as Now (count badge + dotted bullets), under a small "Check-ins" label.
 - Keep agenda short — 1-5 bullets per person. If it's growing past that, the user is hoarding agenda items.
 
+## World clock
+
+- A row of live clocks sits at the very top of the Dashboard, rendered in the browser and refreshed every 10s. Each card shows the city, UTC offset, time, and a day/night marker; one card is highlighted as primary.
+- Cities are a small list in the world-clock `<script>` in `build.py` (default: San Francisco, New York, London). Edit that array — `{ name, tz, primary }` with an IANA timezone — to use your own. Optional; remove the `<nav class="worldclock">` and its script to drop it.
+
 ## Calendar + Activity widgets
 
 - A two-column **widget row** sits between the quote and Now: calendar on the left (fixed width), activity heatmap on the right (flexible), stacking on narrow screens.
