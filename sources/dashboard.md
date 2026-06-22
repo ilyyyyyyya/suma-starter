@@ -23,10 +23,14 @@ What needs doing. Toggle by editing `Suma/dashboard.md` and changing `[ ]` to `[
 
 People to sync with. Each bullet is something to raise next time.
 
-### Person One
+### Alex Rivers
 - Topic to raise
 - Status to share
 - Question to ask
 
-### Person Two
+### Sam Carter
 - Topic to raise
+- Decision to confirm
+
+### Jordan Lee
+- Quick update to share

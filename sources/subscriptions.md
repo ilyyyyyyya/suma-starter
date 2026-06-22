@@ -8,19 +8,20 @@ Replace the examples below with your own.
 
 ## Status
 
-- Last reviewed: <date>. Checked statements for recurring charges, cancelled what you don't use.
+- Last reviewed: 2026-06-20. Checked statements for recurring charges, cancelled what you don't use.
 - Next: monitor for unexpected charges and double-billing.
 
 ## Monthly estimate
 
-- Known run-rate: **<amount> per month**.
-- Variable part: <usage-based services that move around>.
+- Known run-rate: **about £40 per month**.
+- Variable part: usage-based services that move around.
 
 ## To check / cancel
 
-- **<Service>** — decide whether to keep before the next renewal.
+- **Example Streaming** — decide whether to keep before the next renewal.
 
 ## Active
 
-- **<Service>** — monthly, <amount>; renews on the <day>; <card>.
-- **<Service>** — yearly, <amount>; renews <date>; <card>.
+- **Music Service** — monthly, £10; renews on the 5th; everyday card.
+- **Cloud Storage** — monthly, £8; renews on the 12th; everyday card.
+- **Domain Name** — yearly, £14; renews 2 March; everyday card.

@@ -20,6 +20,7 @@ Run it (stdlib only, no pip install):
 
 from __future__ import annotations
 
+import base64
 import datetime as _dt
 import html
 import json
@@ -67,7 +68,7 @@ SECTION_DOTS = {
     "CLIs": "FOREST",
     # Learning sub-sections (H3) — used by their own TOC
     "Currently reading": "COOL",
-    "MADS": "VIBRANT",                  # primary project
+    "Now learning": "VIBRANT",          # a focus topic
     "Books": "FOREST",                  # text content
     "Articles & longreads": "FOREST",
     "Watch": "TWILIGHT",                # video / passive
@@ -364,11 +365,304 @@ def pick_quote_for_today(quotes: list[str]) -> str:
     return quotes[seed % len(quotes)]
 
 
+_Q_OPEN = "“‘\"'«„"
+_Q_CLOSE = "”’\"'»"
+_Q_DASH_RE = re.compile(r"[—–―]")
+
+
+def _strip_wrap_quotes(s: str) -> str:
+    s = s.strip()
+    if len(s) >= 2 and s[0] in _Q_OPEN and s[-1] in _Q_CLOSE:
+        return s[1:-1].strip()
+    return s
+
+
+def _looks_like_author(line: str) -> bool:
+    line = line.strip()
+    if not line or len(line) > 60:
+        return False
+    if line[-1] in ".!?…":
+        return False
+    return len(line.split()) <= 7
+
+
+def split_quote(chunk: str) -> tuple[str, str | None]:
+    """Separate a quote's body from its trailing attribution.
+
+    Handles `quote — Author`, a quote then an `— Author` line, and a short
+    plain trailing line that looks like a name. Returns (text, author|None).
+    """
+    text = chunk.strip()
+    author: str | None = None
+
+    dash = None
+    for m in _Q_DASH_RE.finditer(text):
+        dash = m
+    if dash:
+        after = text[dash.end():].strip()
+        if after and "\n" not in after and len(after) <= 120:
+            text = text[: dash.start()].rstrip()
+            author = after
+
+    if author is None:
+        lines = text.splitlines()
+        if len(lines) >= 2:
+            last = lines[-1].strip()
+            mh = re.match(r"^-{1,2}\s*(.+)$", last)
+            if mh:
+                author = mh.group(1).strip()
+                text = "\n".join(lines[:-1])
+            elif _looks_like_author(last):
+                author = last
+                text = "\n".join(lines[:-1])
+
+    if author is None:
+        m = re.match(r'^[“"\'](.+)[”"\']\s+([^\s].{0,58})$', text)
+        if m and _looks_like_author(m.group(2)):
+            text, author = m.group(1), m.group(2).strip()
+
+    text = re.sub(r"\s*\n\s*", " ", text).strip()
+    text = _strip_wrap_quotes(text)
+    if author:
+        author = author.strip(" —–-•").strip()
+    return text, (author or None)
+
+
 def render_quote_block(quote: str) -> str:
+    """A calm card: gutter quote-mark, quote text, author below, swap button."""
     if not quote:
         return ""
-    escaped = html.escape(quote).replace("\n", "<br>")
-    return f'<blockquote class="quote-block">{escaped}</blockquote>'
+    text, author = split_quote(quote)
+    if not text:
+        text = quote.strip()
+    body = f'<blockquote class="quote-text">{html.escape(text)}</blockquote>'
+    cap = (
+        f'<figcaption class="quote-author">{html.escape(author)}</figcaption>'
+        if author
+        else ""
+    )
+    swap = (
+        '<button class="quote-swap" type="button" aria-label="Show another quote" '
+        'title="Another quote">'
+        '<svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.4" '
+        'stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">'
+        '<path d="M2.5 8a5.5 5.5 0 0 1 9.4-3.9"/>'
+        '<path d="M13.5 8a5.5 5.5 0 0 1-9.4 3.9"/>'
+        '<path d="M11.9 1.6v2.6h-2.6"/>'
+        '<path d="M4.1 14.4v-2.6h2.6"/>'
+        "</svg></button>"
+    )
+    return f'<figure class="quote-block">{swap}{body}{cap}</figure>'
+
+
+# ─── Dashboard: Now + Check-ins as cards ─────────────────────────────────────
+# Each project (and each person under Check-ins) renders as a calm collapsible
+# card with a muted count badge; tasks inside get a small round dot bullet.
+
+# Which project card opens by default. Set to a project name in your Now list,
+# or "" to start them all closed.
+DEFAULT_OPEN_GROUP = "Project One"
+
+
+def render_now_html(md: str) -> str:
+    """Render every project under `## Now` as a collapsible card — project name
+    + count badge on the left, opener on the right — with its tasks inside.
+    The card named `DEFAULT_OPEN_GROUP` starts open; the rest start closed."""
+    lines = md.splitlines()
+    cur_h2: str | None = None
+    cur_h3: str | None = None
+    groups: list[tuple[str, list[tuple[str, str]]]] = []
+    index: dict[str, int] = {}
+    i = 0
+    while i < len(lines):
+        line = lines[i]
+        m2 = re.match(r"^##\s+(.+?)\s*$", line)
+        if m2:
+            cur_h2 = m2.group(1).strip()
+            cur_h3 = None
+            i += 1
+            continue
+        m3 = re.match(r"^###\s+(.+?)\s*$", line)
+        if m3:
+            cur_h3 = m3.group(1).strip()
+            i += 1
+            continue
+        if cur_h2 == "Now" and line.startswith("- "):
+            content = line[2:]
+            while i + 1 < len(lines) and lines[i + 1].startswith("  "):
+                content += " " + lines[i + 1].strip()
+                i += 1
+            cb = re.match(r"^\[([ xX])\]\s+(.*)$", content)
+            if cb:
+                proj = cur_h3 or "Other"
+                if proj not in index:
+                    index[proj] = len(groups)
+                    groups.append((proj, []))
+                groups[index[proj]][1].append((cb.group(1).lower(), cb.group(2)))
+        i += 1
+
+    if not groups:
+        return '<p class="focus-empty">No tasks yet.</p>'
+
+    plus = (
+        '<svg class="chev" viewBox="0 0 16 16" fill="none" stroke="currentColor" '
+        'stroke-width="1.5" stroke-linecap="round" aria-hidden="true">'
+        '<line x1="8" y1="3" x2="8" y2="13"/><line x1="3" y1="8" x2="13" y2="8"/></svg>'
+    )
+    blocks = []
+    for proj, tasks in groups:
+        lis = []
+        for state, text in tasks:
+            klass = "task task-done" if state == "x" else "task"
+            lis.append(f'<li class="{klass}"><span class="task-text">{render_inline(text)}</span></li>')
+        open_attr = " open" if proj == DEFAULT_OPEN_GROUP else ""
+        badge = f'<span class="focus-count">{len(tasks)}</span>'
+        blocks.append(
+            f'<details class="focus-group"{open_attr}>'
+            f'<summary><span class="focus-name">{html.escape(proj)}{badge}</span>{plus}</summary>'
+            f'<ul class="focus-tasks">{"".join(lis)}</ul>'
+            "</details>"
+        )
+    return '<div class="focus-groups">' + "\n".join(blocks) + "</div>"
+
+
+def render_checkins_html(md: str) -> str:
+    """Render the Check-ins section as focus-group cards, one per person, so it
+    matches the Now list. Agenda items are plain bullets (no checkboxes)."""
+    lines = md.splitlines()
+    in_section = False
+    cur_h3: str | None = None
+    groups: list[tuple[str, list[str]]] = []
+    index: dict[str, int] = {}
+    i = 0
+    while i < len(lines):
+        line = lines[i]
+        m2 = re.match(r"^##\s+(.+?)\s*$", line)
+        if m2:
+            in_section = m2.group(1).strip() == "Check-ins"
+            cur_h3 = None
+            i += 1
+            continue
+        if not in_section:
+            i += 1
+            continue
+        m3 = re.match(r"^###\s+(.+?)\s*$", line)
+        if m3:
+            cur_h3 = m3.group(1).strip()
+            i += 1
+            continue
+        if cur_h3 and line.startswith("- "):
+            content = line[2:]
+            while i + 1 < len(lines) and lines[i + 1].startswith("  "):
+                content += " " + lines[i + 1].strip()
+                i += 1
+            if cur_h3 not in index:
+                index[cur_h3] = len(groups)
+                groups.append((cur_h3, []))
+            groups[index[cur_h3]][1].append(content)
+        i += 1
+
+    if not groups:
+        return ""
+
+    plus = (
+        '<svg class="chev" viewBox="0 0 16 16" fill="none" stroke="currentColor" '
+        'stroke-width="1.5" stroke-linecap="round" aria-hidden="true">'
+        '<line x1="8" y1="3" x2="8" y2="13"/><line x1="3" y1="8" x2="13" y2="8"/></svg>'
+    )
+    blocks = []
+    for person, items in groups:
+        lis = "".join(
+            f'<li class="task"><span class="task-text">{render_inline(t)}</span></li>'
+            for t in items
+        )
+        badge = f'<span class="focus-count">{len(items)}</span>'
+        blocks.append(
+            '<details class="focus-group" open>'
+            f'<summary><span class="focus-name">{html.escape(person)}{badge}</span>{plus}</summary>'
+            f'<ul class="focus-tasks">{lis}</ul>'
+            "</details>"
+        )
+    return (
+        '<div class="checkins-label">Check-ins</div>'
+        '<div class="focus-groups">' + "\n".join(blocks) + "</div>"
+    )
+
+
+# ─── Birthdays this month ────────────────────────────────────────────────────
+# Reads People notes for a `**Birthday:** Month Day` line. People notes live one
+# level up from Suma, in `vault/People/`. For a self-contained demo (and so the
+# starter shows something on first build) we also accept a `people/` folder next
+# to build.py, including the kit's `sources/people/` staging copy.
+
+_MONTHS = {
+    "jan": 1, "feb": 2, "mar": 3, "apr": 4, "may": 5, "jun": 6,
+    "jul": 7, "aug": 8, "sep": 9, "oct": 10, "nov": 11, "dec": 12,
+}
+
+
+def _people_dirs() -> list[Path]:
+    return [
+        VAULT / "People",          # installed layout: vault/People/
+        SUMA / "people",           # optional folder next to build.py
+        SUMA / "sources" / "people",  # kit staging copy (repo demo)
+    ]
+
+
+def scan_birthdays() -> list[tuple[int, int, str]]:
+    """(month, day, name) for each People note with a `**Birthday:** Month Day` line."""
+    out = []
+    seen_names: set[str] = set()
+    for people in _people_dirs():
+        if not people.is_dir():
+            continue
+        for f in sorted(people.glob("*.md")):
+            try:
+                text = f.read_text(encoding="utf-8", errors="ignore")
+            except OSError:
+                continue
+            m = re.search(r"\*\*Birthday:\*\*\s*([A-Za-z]+)\s+(\d{1,2})", text, re.I)
+            if not m:
+                continue
+            mon = _MONTHS.get(m.group(1)[:3].lower())
+            if not mon:
+                continue
+            name = f.stem.replace("-", " ").title()
+            if name in seen_names:
+                continue
+            seen_names.add(name)
+            out.append((mon, int(m.group(2)), name))
+    return out
+
+
+def render_birthdays_html(today: _dt.date) -> str:
+    """Birthdays falling in the current month, as a quiet name/date list.
+    Hidden entirely when there are none this month."""
+    month_bdays = sorted(
+        (day, name) for (mon, day, name) in scan_birthdays() if mon == today.month
+    )
+    if not month_bdays:
+        return ""
+    rows = []
+    for day, name in month_bdays:
+        cls = "bday-row"
+        if day == today.day:
+            cls += " is-today"
+            date_lbl = "Today"
+        else:
+            if day < today.day:
+                cls += " is-past"
+            date_lbl = f"{day} {today.strftime('%b')}"
+        rows.append(
+            f'<li class="{cls}">'
+            f'<span class="bday-name">{html.escape(name)}</span>'
+            f'<span class="bday-date">{html.escape(date_lbl)}</span>'
+            "</li>"
+        )
+    return (
+        '<div class="checkins-label">Birthdays this month</div>'
+        '<ul class="bday-list">' + "".join(rows) + "</ul>"
+    )
 
 
 # ─── Builds scanner ─────────────────────────────────────────────────────────
@@ -1059,12 +1353,159 @@ def render_toolkit_md(kit: dict) -> str:
     return "\n".join(lines).rstrip() + "\n"
 
 
+# ─── Activity heatmap ───────────────────────────────────────────────────────
+# Contribution-graph view of changelog activity. For each dated entry we count
+# the project paragraphs and completed-task bullets; the grid shades by volume.
+# Monochrome ink ramp, not the GitHub blue — stays inside Suma's calm palette.
+
+_ACT_DATE_RE = re.compile(r"^##\s+(\d{4})-(\d{2})-(\d{2})\b")
+_ACT_PARA_RE = re.compile(r"^\*\*[^*]+\*\*\s+—")
+_ACT_DONE_RE = re.compile(r"^-\s+\*\*[^*]+\*\*\s+done:")
+
+
+def scan_activity(md: str) -> dict[_dt.date, int]:
+    """Map each changelog date → number of things that happened that day."""
+    counts: dict[_dt.date, int] = {}
+    cur: _dt.date | None = None
+    for line in md.splitlines():
+        m = _ACT_DATE_RE.match(line)
+        if m:
+            try:
+                cur = _dt.date(int(m.group(1)), int(m.group(2)), int(m.group(3)))
+            except ValueError:
+                cur = None
+            if cur is not None and cur not in counts:
+                counts[cur] = 0
+            continue
+        if cur is None:
+            continue
+        # Count plain changelog bullets too, so a normal entry registers.
+        if line.startswith("- ") or _ACT_PARA_RE.match(line) or _ACT_DONE_RE.match(line):
+            counts[cur] += 1
+    # A dated entry always means *something* happened, even if unparsed.
+    for d in list(counts):
+        if counts[d] == 0:
+            counts[d] = 1
+    return counts
+
+
+def _act_level(n: int) -> int:
+    if n <= 0:
+        return 0
+    if n == 1:
+        return 1
+    if n == 2:
+        return 2
+    if n <= 4:
+        return 3
+    return 4
+
+
+def activity_stats(counts: dict[_dt.date, int], today: _dt.date) -> dict:
+    days = sorted(counts)
+    busiest = max(counts.items(), key=lambda kv: (kv[1], kv[0]))
+    longest = run = 1
+    for prev, d in zip(days, days[1:]):
+        run = run + 1 if (d - prev).days == 1 else 1
+        longest = max(longest, run)
+    current = 0
+    probe = today
+    while probe in counts:
+        current += 1
+        probe -= _dt.timedelta(days=1)
+    return {
+        "active_days": len(days),
+        "busiest_date": busiest[0],
+        "busiest_n": busiest[1],
+        "longest": longest,
+        "current": current,
+        "first": days[0],
+        "last": days[-1],
+    }
+
+
+def render_activity_html(counts: dict[_dt.date, int], today: _dt.date) -> str:
+    if not counts:
+        return ""
+    s = activity_stats(counts, today)
+
+    cap_start = today - _dt.timedelta(weeks=52)
+    start = max(s["first"], cap_start)
+    start -= _dt.timedelta(days=(start.weekday() + 1) % 7)        # back to Sunday
+    end = today + _dt.timedelta(days=(5 - today.weekday()) % 7)    # forward to Saturday
+
+    weeks: list[list[_dt.date]] = []
+    d = start
+    while d <= end:
+        weeks.append([d + _dt.timedelta(days=k) for k in range(7)])
+        d += _dt.timedelta(days=7)
+
+    cells: list[str] = []
+    for week in weeks:
+        for day in week:
+            n = counts.get(day, 0)
+            if day > today:
+                title = day.isoformat()
+            elif n:
+                title = f'{day.isoformat()} · {n} update' + ("" if n == 1 else "s")
+            else:
+                title = day.isoformat()
+            cells.append(
+                f'<span class="act-cell act-l{_act_level(n)}" '
+                f'title="{html.escape(title)}"></span>'
+            )
+
+    months: list[str] = []
+    prev_mon = None
+    for week in weeks:
+        mon = week[0].month
+        label = week[0].strftime("%b") if mon != prev_mon else ""
+        months.append(f'<span class="act-mon">{label}</span>')
+        prev_mon = mon
+
+    b = s["busiest_date"]
+    meta = (
+        f'{s["active_days"]} active days · current streak {s["current"]} · '
+        f'longest {s["longest"]} · busiest {b.day} {b.strftime("%b")} '
+        f'({s["busiest_n"]})'
+    )
+    return (
+        '<section class="act-widget" aria-label="Activity">'
+        '<div class="act-widget-label">Activity</div>'
+        '<div class="act-scroll">'
+        '<div class="act-months">' + "".join(months) + "</div>"
+        '<div class="act-grid">' + "".join(cells) + "</div>"
+        "</div>"
+        f'<div class="act-widget-meta">{html.escape(meta)}</div>'
+        "</section>"
+    )
+
+
+def favicon_data_uri() -> str:
+    """A generic Suma mark — a vibrant gradient dot on a rounded near-black tile,
+    as an inline SVG data URI. Matches the section-dot identity; no asset file."""
+    svg = (
+        '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 100 100">'
+        '<defs><linearGradient id="g" x1="0" y1="0" x2="1" y2="1">'
+        '<stop offset="0" stop-color="#b8ff45"/>'
+        '<stop offset="0.35" stop-color="#ffcb45"/>'
+        '<stop offset="1" stop-color="#ff00b8"/>'
+        "</linearGradient></defs>"
+        '<rect width="100" height="100" rx="22" fill="#0b0b0b"/>'
+        '<circle cx="50" cy="50" r="22" fill="url(#g)"/>'
+        "</svg>"
+    )
+    b64 = base64.b64encode(svg.encode("utf-8")).decode("ascii")
+    return "data:image/svg+xml;base64," + b64
+
+
 HTML_SHELL = """<!doctype html>
 <html lang="en">
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>Suma</title>
+<link rel="icon" type="image/svg+xml" href="{favicon}">
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
 <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500&display=swap" rel="stylesheet">
@@ -1174,6 +1615,13 @@ HTML_SHELL = """<!doctype html>
     margin: 0;
     color: var(--color-cloud-white);
   }}
+  header h1 a {{
+    color: inherit;
+    text-decoration: none;
+    border-bottom: 0;
+    cursor: pointer;
+  }}
+  header h1 a:hover {{ border-bottom: 0; }}
   header .meta {{
     font-family: var(--font-mono);
     font-weight: 400;
@@ -1561,17 +2009,302 @@ HTML_SHELL = """<!doctype html>
     padding: 0;
   }}
 
-  /* ─── Daily quote ─── */
-  .quote-block {{
-    margin: 0 0 40px;
+  /* ─── Dashboard cards: Now + Check-ins ─── */
+  .focus-groups {{
+    display: flex;
+    flex-direction: column;
+    gap: 12px;
+    margin: 0;
+  }}
+  .checkins-label {{
+    margin: 28px 0 12px;
+    font-family: var(--font-mono);
+    font-size: 10px;
+    letter-spacing: 0.45px;
+    text-transform: uppercase;
+    color: var(--color-ash-gray);
+  }}
+  .focus-group {{
+    background: var(--color-stormy-night);
+    border-radius: 14px;
+    padding: 4px 22px;
+  }}
+  .focus-group > summary {{
+    list-style: none;
+    cursor: pointer;
+    display: flex;
+    align-items: center;
+    gap: 14px;
+    padding: 16px 0;
+    font-family: var(--font-body);
+    font-size: 14px;
+    font-weight: 500;
+    color: var(--color-cloud-white);
+  }}
+  .focus-group > summary::-webkit-details-marker {{ display: none; }}
+  .focus-group .chev {{
+    width: 15px;
+    height: 15px;
+    flex: none;
+    color: var(--color-ash-gray);
+    transition: transform 180ms ease;
+  }}
+  .focus-group[open] > summary .chev {{ transform: rotate(45deg); }}
+  .focus-group[open] > summary {{
+    border-bottom: 1px solid var(--color-deep-shadow);
+    margin-bottom: 8px;
+  }}
+  .focus-group .focus-name {{ flex: 1; }}
+  .focus-count {{
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    min-width: 18px;
+    height: 18px;
+    padding: 0 5px;
+    margin-left: 9px;
+    border-radius: 9px;
+    background: var(--color-deep-shadow);
+    color: var(--color-ash-gray);
+    font-family: var(--font-mono);
+    font-size: 11px;
+    font-weight: 500;
+    line-height: 1;
+    vertical-align: middle;
+  }}
+  .focus-group .focus-tasks {{
+    background: transparent;
+    box-shadow: none;
+    border-radius: 0;
     padding: 0;
-    font-style: italic;
-    font-weight: 400;
+    margin: 0 0 6px;
+  }}
+  .focus-group .focus-tasks li {{
+    padding: 10px 0;
+    border-bottom: 1px solid var(--color-deep-shadow);
+  }}
+  .focus-group .focus-tasks li:first-child {{ padding-top: 2px; }}
+  .focus-group .focus-tasks li:last-child {{ border-bottom: none; }}
+  .focus-group .focus-tasks li.task {{ gap: 10px; }}
+  .focus-group .focus-tasks li.task::before {{
+    content: "";
+    flex: none;
+    width: 5px;
+    height: 5px;
+    margin-top: 8px;
+    border-radius: 50%;
+    background: var(--color-ash-gray);
+  }}
+  .focus-group .focus-tasks li.task-done::before {{ opacity: 0.45; }}
+  .focus-empty {{
     color: var(--color-ash-gray);
     font-size: 14px;
     line-height: 1.6;
-    letter-spacing: 0;
-    max-width: 640px;
+  }}
+
+  /* ─── Birthdays this month ─── */
+  .bday-list {{
+    background: var(--color-stormy-night);
+    border-radius: 14px;
+    padding: 2px 22px;
+    margin: 0;
+  }}
+  .bday-row {{
+    display: flex;
+    align-items: baseline;
+    justify-content: space-between;
+    gap: 12px;
+    padding: 12px 0;
+    border-bottom: 1px solid var(--color-deep-shadow);
+  }}
+  .bday-row:last-child {{ border-bottom: none; }}
+  .bday-name {{ color: var(--color-cloud-white); font-size: 14px; }}
+  .bday-date {{
+    font-family: var(--font-mono);
+    font-size: 12px;
+    color: var(--color-ash-gray);
+    white-space: nowrap;
+  }}
+  .bday-row.is-past .bday-name {{ color: var(--color-ash-gray); }}
+  .bday-row.is-today .bday-name {{ font-weight: 500; }}
+  .bday-row.is-today .bday-date {{ color: var(--color-electric-blue); }}
+
+  /* ─── Daily quote ─── */
+  .quote-block {{
+    position: relative;
+    margin: 0 0 16px;
+    padding: 26px 30px 26px 58px;
+    background: var(--color-stormy-night);
+    border-radius: 18px;
+  }}
+  .quote-block::before {{
+    content: "“";
+    position: absolute;
+    top: 16px;
+    left: 24px;
+    font-size: 40px;
+    line-height: 1;
+    color: var(--color-ash-gray);
+    opacity: 0.55;
+    pointer-events: none;
+  }}
+  .quote-text {{
+    position: relative;
+    margin: 0;
+    color: var(--color-cloud-white);
+    font-size: 16px;
+    line-height: 1.65;
+    letter-spacing: -0.2px;
+  }}
+  .quote-author {{
+    margin-top: 14px;
+    font-size: 13px;
+    color: var(--color-ash-gray);
+  }}
+  .quote-swap {{
+    position: absolute;
+    top: 14px;
+    right: 16px;
+    appearance: none;
+    cursor: pointer;
+    background: transparent;
+    border: 0;
+    padding: 4px;
+    line-height: 0;
+    border-radius: 7px;
+    color: var(--color-ash-gray);
+    opacity: 0.55;
+    transition: opacity 120ms ease, color 120ms ease, transform 200ms ease;
+  }}
+  .quote-swap:hover {{ opacity: 1; color: var(--color-cloud-white); }}
+  .quote-swap:active {{ transform: rotate(-90deg); }}
+  .quote-swap svg {{ width: 14px; height: 14px; display: block; }}
+
+  /* ─── Activity heatmap (Dashboard widget) ─── */
+  .act-widget {{
+    background: var(--color-midnight-ink);
+    border-radius: 18px;
+    box-shadow: var(--inset-subtle);
+    padding: 20px 24px 18px;
+    margin: 0 0 22px;
+  }}
+  .act-widget-label {{
+    font-family: var(--font-mono);
+    font-size: 10px;
+    letter-spacing: 0.45px;
+    text-transform: uppercase;
+    color: var(--color-ash-gray);
+    margin-bottom: 14px;
+  }}
+  .act-widget-meta {{
+    font-family: var(--font-mono);
+    font-size: 11px;
+    letter-spacing: 0.2px;
+    color: var(--color-ash-gray);
+    margin-top: 14px;
+  }}
+  .act-scroll {{
+    overflow-x: auto;
+    padding-bottom: 4px;
+  }}
+  .act-months {{
+    display: grid;
+    grid-auto-flow: column;
+    grid-auto-columns: 13px;
+    gap: 4px;
+    margin-bottom: 7px;
+  }}
+  .act-mon {{
+    font-family: var(--font-mono);
+    font-size: 10px;
+    line-height: 1;
+    color: var(--color-ash-gray);
+    white-space: nowrap;
+    overflow: visible;
+  }}
+  .act-grid {{
+    display: grid;
+    grid-template-rows: repeat(7, 13px);
+    grid-auto-flow: column;
+    grid-auto-columns: 13px;
+    gap: 4px;
+    width: max-content;
+  }}
+  .act-cell {{
+    width: 13px;
+    height: 13px;
+    border-radius: 3px;
+    background: var(--color-stormy-night);
+    box-shadow: var(--inset-subtle);
+  }}
+  .act-l1 {{ background: color-mix(in srgb, var(--color-cloud-white) 16%, transparent); box-shadow: none; }}
+  .act-l2 {{ background: color-mix(in srgb, var(--color-cloud-white) 34%, transparent); box-shadow: none; }}
+  .act-l3 {{ background: color-mix(in srgb, var(--color-cloud-white) 56%, transparent); box-shadow: none; }}
+  .act-l4 {{ background: color-mix(in srgb, var(--color-cloud-white) 82%, transparent); box-shadow: none; }}
+
+  /* ─── Dashboard widget row (calendar + activity) ─── */
+  .widget-row {{
+    display: flex;
+    gap: 16px;
+    align-items: stretch;
+    margin: 0 0 16px;
+  }}
+  .widget-row > .cal-widget {{ flex: 0 0 248px; }}
+  .widget-row > .act-widget {{ flex: 1 1 auto; min-width: 0; margin: 0; }}
+  @media (max-width: 720px) {{
+    .widget-row {{ flex-wrap: wrap; }}
+    .widget-row > .cal-widget,
+    .widget-row > .act-widget {{ flex: 1 1 100%; }}
+  }}
+
+  /* ─── Calendar widget ─── */
+  .cal-widget {{
+    background: var(--color-midnight-ink);
+    border-radius: 18px;
+    box-shadow: var(--inset-subtle);
+    padding: 18px 20px 20px;
+  }}
+  .cal-month {{
+    font-family: var(--font-mono);
+    font-size: 11px;
+    font-weight: 500;
+    letter-spacing: 0.5px;
+    color: var(--color-electric-blue);
+    margin-bottom: 14px;
+  }}
+  .cal-grid {{
+    display: grid;
+    grid-template-columns: repeat(7, 1fr);
+  }}
+  .cal-head {{
+    text-align: center;
+    font-size: 11px;
+    color: var(--color-ash-gray);
+    padding-bottom: 10px;
+  }}
+  .cal-cell {{
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    aspect-ratio: 1 / 1;
+    font-size: 13px;
+  }}
+  .cal-num {{
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    width: 26px;
+    height: 26px;
+    border-radius: 50%;
+    color: var(--color-cloud-white);
+    font-variant-numeric: tabular-nums;
+  }}
+  .cal-head.cal-weekend,
+  .cal-weekend .cal-num {{ color: var(--color-ash-gray); }}
+  .cal-today .cal-num {{
+    background: var(--color-electric-blue);
+    color: #fff;
+    font-weight: 500;
   }}
 
   /* ─── Footer ─── */
@@ -1616,7 +2349,7 @@ HTML_SHELL = """<!doctype html>
 <body>
   <div class="wrap">
     <header>
-      <h1>Suma</h1>
+      <h1><a class="logo-home" href="#dashboard" aria-label="Back to dashboard">Suma</a></h1>
       <div class="header-right">
         <span class="meta">Updated {updated}</span>
         <button class="theme-toggle" type="button" aria-label="Toggle theme" title="Toggle theme">
@@ -1639,11 +2372,14 @@ HTML_SHELL = """<!doctype html>
 
     <section id="view-dashboard" class="view" role="tabpanel">
       {quote_block}
-      <nav class="toc">
-        {toc}
-      </nav>
+      <div class="widget-row">
+        <section class="cal-widget" id="calwidget" aria-label="Calendar"></section>
+        {activity_block}
+      </div>
       <main>
-        {dashboard_body}
+        {now_body}
+        {checkins_body}
+        {birthdays_block}
       </main>
     </section>
 
@@ -1726,6 +2462,16 @@ HTML_SHELL = """<!doctype html>
       history.replaceState(null, '', '#' + target.replace(/^view-/, ''));
     }}));
 
+    // Logo → back to dashboard
+    const logo = document.querySelector('.logo-home');
+    if (logo) {{
+      logo.addEventListener('click', (e) => {{
+        e.preventDefault();
+        show('view-dashboard');
+        history.replaceState(null, '', '#dashboard');
+      }});
+    }}
+
     // Initial state: URL hash > localStorage > default dashboard
     const hash = location.hash.replace('#', '');
     const valid = ['view-dashboard', 'view-projects', 'view-ideas', 'view-learning', 'view-subscriptions', 'view-builds', 'view-toolkit', 'view-changelog'];
@@ -1749,6 +2495,67 @@ HTML_SHELL = """<!doctype html>
         try {{ localStorage.setItem('vault.theme', next); }} catch (e) {{}}
       }});
     }}
+  }})();
+</script>
+
+<script>
+  /* Calendar — current month with today marked, Monday-first. Rendered live. */
+  (function () {{
+    const el = document.getElementById('calwidget');
+    if (!el) return;
+    function render() {{
+      const now = new Date();
+      const y = now.getFullYear(), m = now.getMonth(), today = now.getDate();
+      const monthName = now.toLocaleString('en-GB', {{ month: 'long' }}).toUpperCase();
+      const startCol = (new Date(y, m, 1).getDay() + 6) % 7;   // Monday-first
+      const days = new Date(y, m + 1, 0).getDate();
+      const heads = ['M', 'T', 'W', 'T', 'F', 'S', 'S'];
+      let cells = '';
+      for (let i = 0; i < startCol; i++) cells += '<span class="cal-cell cal-empty"></span>';
+      for (let d = 1; d <= days; d++) {{
+        const col = (startCol + d - 1) % 7;
+        let cls = 'cal-cell';
+        if (col >= 5) cls += ' cal-weekend';
+        if (d === today) cls += ' cal-today';
+        cells += '<span class="' + cls + '"><span class="cal-num">' + d + '</span></span>';
+      }}
+      el.innerHTML =
+        '<div class="cal-month">' + monthName + '</div>' +
+        '<div class="cal-grid cal-heads">' + heads.map(function (h, i) {{
+          return '<span class="cal-head' + (i >= 5 ? ' cal-weekend' : '') + '">' + h + '</span>';
+        }}).join('') + '</div>' +
+        '<div class="cal-grid cal-days">' + cells + '</div>';
+    }}
+    render();
+  }})();
+</script>
+
+<script id="quotes-data" type="application/json">{quotes_json}</script>
+<script>
+  /* Swap quote — pick another from the embedded list, no rebuild needed. */
+  (function () {{
+    var el = document.getElementById('quotes-data');
+    var btn = document.querySelector('.quote-swap');
+    var fig = document.querySelector('.quote-block');
+    if (!el || !btn || !fig) return;
+    var quotes = [];
+    try {{ quotes = JSON.parse(el.textContent); }} catch (e) {{}}
+    if (quotes.length < 2) {{ btn.style.display = 'none'; return; }}
+    var textEl = fig.querySelector('.quote-text');
+    var cur = textEl ? textEl.textContent : '';
+    btn.addEventListener('click', function () {{
+      var q, n = 0;
+      do {{ q = quotes[Math.floor(Math.random() * quotes.length)]; n++; }} while (q.t === cur && n < 12);
+      cur = q.t;
+      if (textEl) textEl.textContent = q.t;
+      var a = fig.querySelector('.quote-author');
+      if (q.a) {{
+        if (!a) {{ a = document.createElement('figcaption'); a.className = 'quote-author'; fig.appendChild(a); }}
+        a.textContent = q.a;
+      }} else if (a) {{
+        a.parentNode.removeChild(a);
+      }}
+    }});
   }})();
 </script>
 </body>
@@ -1780,17 +2587,27 @@ def main() -> None:
     proj_md = re.sub(r"^# Projects\s*\n+", "", proj_md, count=1)
     subs_md = re.sub(r"^# Subscriptions\s*\n+", "", subs_md, count=1)
 
-    dashboard_body, dashboard_toc = md_to_html(dash_md)
+    today = _dt.date.today()
+    now_body = render_now_html(dash_md)
+    checkins_body = render_checkins_html(dash_md)
+    birthdays_block = render_birthdays_html(today)
+    activity_block = render_activity_html(scan_activity(log_md), today)
     changelog_body, _ = md_to_html(log_md)
     learning_body, learning_toc = md_to_html(learn_md)
     ideas_body, _ = md_to_html(ideas_md)
     projects_body, projects_toc = md_to_html(proj_md)
     subscriptions_body, subscriptions_toc = md_to_html(subs_md)
-    nav = build_toc(dashboard_toc, level=2)
     learning_nav = build_toc(learning_toc, level=3)
     projects_nav = build_toc(projects_toc, level=2)
     subscriptions_nav = build_toc(subscriptions_toc, level=2)
-    quote_block = render_quote_block(pick_quote_for_today(load_quotes()))
+    quotes_raw = load_quotes()
+    quote_block = render_quote_block(pick_quote_for_today(quotes_raw))
+    quotes_parsed = []
+    for _q in quotes_raw:
+        _t, _a = split_quote(_q)
+        quotes_parsed.append({"t": _t or _q.strip(), "a": _a or ""})
+    quotes_json = json.dumps(quotes_parsed, ensure_ascii=False).replace("</", "<\\/")
+    favicon = favicon_data_uri()
     builds = scan_builds()
     builds_body = render_builds_html(builds)
     BUILDS_OUT.write_text(render_builds_md(builds), encoding="utf-8")
@@ -1802,10 +2619,14 @@ def main() -> None:
     OUT.write_text(
         HTML_SHELL.format(
             updated=html.escape(updated),
-            toc=nav,
             learning_toc=learning_nav,
             projects_toc=projects_nav,
-            dashboard_body=dashboard_body,
+            now_body=now_body,
+            checkins_body=checkins_body,
+            birthdays_block=birthdays_block,
+            activity_block=activity_block,
+            quotes_json=quotes_json,
+            favicon=favicon,
             projects_body=projects_body,
             ideas_body=ideas_body,
             learning_body=learning_body,

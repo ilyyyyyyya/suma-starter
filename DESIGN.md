@@ -12,10 +12,16 @@ Quiet text and whitespace IS the design. Suma is for the user to read back, not 
 - Coloured "Focus" blocks, KPI tiles, "today's highlight" cards
 - Age chips ("3 days ago", "stale", "fresh")
 - Progress bars on tasks
-- Stats / counts as visual elements (apart from the Overview block on Projects, which is plain text bullets)
+- Loud stats / counts as visual elements (the muted count badge on Now/Check-in cards and the Overview block on Projects are the only exceptions — both are quiet, not coloured)
 - Emojis in source markdown
 - Avatars, profile circles, anything social-feed-shaped
-- Sparklines, charts, graphs
+
+**Carved exceptions (Dashboard widgets):**
+
+Two Dashboard widgets bend the "no charts" rule, deliberately and quietly:
+
+- **Calendar** — a plain current-month grid, today marked with a single filled dot. No data, no trend line.
+- **Activity heatmap** — a contribution-graph grid built from changelog dates. This is the one chart in Suma. It is allowed *only* because it stays inside the calm palette: a monochrome ink ramp (not GitHub blue), no axes, no numbers in the grid, just five shaded levels and a one-line text meta. If you add any other chart, sparkline, or graph anywhere else, you are breaking the rule — these two are the whole budget.
 
 **Do keep:**
 
@@ -42,13 +48,13 @@ Default palette and intent:
 | `SAND`      | Quiet / dormant (Idle, To review, Other bookmarks) |
 | `MIST`      | Utility / neutral (Tools, People, Overview) |
 
-Unrecognised headings get no dot, not a default colour — that's intentional; new sections should be a deliberate choice.
+Unrecognised headings fall back to the neutral `MIST` dot (`SECTION_DOTS.get(title, "MIST")`). If you add a new section that deserves its own colour, add it to `SECTION_DOTS` deliberately rather than relying on the fallback.
 
 ## Tabs
 
 Eight tabs, in this order:
 
-1. **Dashboard** — Now + Check-ins
+1. **Dashboard** — daily quote, a calendar + activity-heatmap widget row, then Now, Check-ins, and Birthdays this month
 2. **Projects** — Overview + Active + Idle / Resumable
 3. **Ideas**
 4. **Learning**
@@ -66,7 +72,9 @@ Don't reorder. Dashboard is where the user lands every time, so it must be tab o
 - One `### Project Name` heading per active project, in roughly priority order.
 - `### Personal` last.
 - Bullets are GitHub-style checkboxes: `- [ ] thing` or `- [x] done thing`.
-- The renderer hides completed items by default (or visually de-emphasises them — implementation choice).
+- The renderer draws each project as a quiet collapsible card with a muted count badge; tasks inside get a small round dot bullet (dimmed when done).
+- Completed `[x]` tasks are archived into the changelog on the next build (see `archive_completed_tasks`), so the card shows what's still open.
+- The card named `DEFAULT_OPEN_GROUP` (near the top of `build.py`) starts expanded; set it to "" to start them all closed.
 - An empty project heading should not appear on the rendered page. Either the renderer hides it, or the user removes the heading manually.
 
 ## Projects
@@ -83,7 +91,20 @@ Don't reorder. Dashboard is where the user lands every time, so it must be tab o
 
 - One `### Name` per person.
 - Plain bullets, NOT checkboxes. Agenda items recur; they don't "complete".
+- Renders as the same calm card style as Now (count badge + dotted bullets), under a small "Check-ins" label.
 - Keep agenda short — 1-5 bullets per person. If it's growing past that, the user is hoarding agenda items.
+
+## Calendar + Activity widgets
+
+- A two-column **widget row** sits between the quote and Now: calendar on the left (fixed width), activity heatmap on the right (flexible), stacking on narrow screens.
+- **Calendar** is rendered live in the browser from the visitor's clock — current month, Monday-first, weekends muted, today a filled dot. No source file, no Python data.
+- **Activity heatmap** is built in `build.py` from `changelog.md` dates (`scan_activity` / `render_activity_html`). One cell per day, five monochrome shade levels, hover title per cell, one-line meta. See the carved exception under "Do not add" above.
+
+## Birthdays this month
+
+- A quiet name/date list under Now/Check-ins, showing only people whose birthday is in the current month; hidden entirely when there are none.
+- Source is People notes with a `**Birthday:** Month Day` line. The renderer looks in `vault/People/` (installed layout), then a `people/` folder next to `build.py`, then the kit's `sources/people/` staging copy.
+- Today's birthday is highlighted and labelled "Today"; earlier days this month are dimmed.
 
 ## Ideas
 
@@ -122,7 +143,7 @@ Auto-generated. The renderer:
 
 1. Walks `~/Desktop/code/*`
 2. For each subfolder, reads `.git/config` for the GitHub remote
-3. Looks in the folder's `README.md` for a deploy URL (`*.vercel.app`, `*.here.now`, etc.)
+3. Looks in the folder's `README.md` for a deploy URL (`*.vercel.app`, `*.netlify.app`, etc.)
 4. Groups results into **Live** / **On git, not deployed** / **Local only**
 5. Writes the result to `Suma/builds.md` AND renders it into the dashboard
 
@@ -150,21 +171,23 @@ Rows reuse the calm `build-tag` chip for scope/source (e.g. `global`, `personal`
 
 ## Daily quote
 
-- One quote sits quietly above Now on the Dashboard, in muted italic. It's the one bit of personality on the page.
-- Source is `Suma/quotes.md`: quote then `— Attribution`, blank line between entries. Headings and `---` rules are ignored, so the file can be grouped into categories.
-- The renderer picks one per day deterministically (rotates by date), so it's stable within a day and changes tomorrow. No randomness, no API.
-- Optional. No file means no quote, not an error. Keep it calm — don't make it big, boxed, or coloured.
+- One quote sits at the top of the Dashboard as a calm card: a large decorative quote-mark in the left gutter, the quote text, the author below, and a small circular swap button top-right.
+- Source is `Suma/quotes.md`: quote then `— Attribution`, blank line between entries. Headings (lines starting with `#`) and `---` rules are ignored, so the file can be grouped into categories.
+- The renderer splits the author out of each chunk (`split_quote`) so the quote and attribution style separately.
+- It picks one per day deterministically (rotates by date), so it's stable within a day and changes tomorrow. No randomness, no API for the daily pick.
+- The swap button cycles to another quote instantly, client-side, from a JSON list of all quotes embedded in the page. No rebuild needed; the daily pick is unchanged on reload.
+- Optional. No file means no quote, not an error. Keep it calm — the card is muted, not coloured.
 
 ## Plain language rule (this applies to every tab)
 
 Suma is read back by the user, not by stakeholders. Bullets should read like a teammate update.
 
 Good:
-- `- **Pranasalt** site moved to a faster host — auto-deploys when I push`
-- `- **MADS** dropped MADS 2x tasks from Now — still active as a project, just not in current focus`
+- `- **Project One** moved to a faster host — auto-deploys when I push`
+- `- **Project Two** dropped the v2 tasks from Now — still active, just not in current focus`
 
 Bad:
-- `- **Pranasalt** `next.config.ts` dropped `output: "export"`, `/api/waitlist` now a same-origin Next route, here.now Action disabled`
-- `- **MADS** Removed MADS_2x_TASKS_v2 from active focus per project review meeting outcome`
+- `- **Project One** switched the build to static export and moved the signup route same-origin, old deploy action disabled`
+- `- **Project Two** removed the v2 task list from active focus per the project review meeting`
 
 If a bullet needs commit-message specifics, those belong in the project's GitHub issues or internal notes — not in Suma.

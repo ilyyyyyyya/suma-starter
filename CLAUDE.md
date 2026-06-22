@@ -33,7 +33,7 @@ Not every folder is mandatory. The only one Suma actually needs is `Suma/`.
 Suma is the personal dashboard. It all lives in one folder in the vault, `Suma/`: the markdown sources you edit, the renderer (`build.py`), and the generated `dashboard.html`.
 
 **In the vault (`vault/Suma/`):**
-- `dashboard.md` — Now (project-grouped checkbox tasks) + Check-ins
+- `dashboard.md` — Now (project-grouped checkbox tasks) + Check-ins. The Dashboard also shows a daily quote, a live calendar, an activity heatmap from the changelog, and "Birthdays this month" (from `vault/People/` notes).
 - `projects.md` — Overview + Active + Idle / Resumable project state
 - `ideas.md` — sketched, not built; promote into Active in `projects.md` when one earns the time
 - `learning.md` — what you're learning, reading, watching, saving
@@ -51,7 +51,8 @@ Suma is the personal dashboard. It all lives in one folder in the vault, `Suma/`
 
 - **Now** (`dashboard.md`): project-grouped checkbox tasks. One `### Project` heading per active project + `### Personal` at the bottom for personal to-dos. Toggle by editing the markdown: `- [ ] thing` ↔ `- [x] thing`. Do not create a standalone Personal section anywhere else in Suma.
 - **Projects** (`projects.md`): starts with `## Overview` — ~5 short portfolio-summary bullets (counts, primary bets, this week's push, things to watch). Then `## Active` with `### Building` and `### Advising / helping` sub-groups, then `## Idle / Resumable`. Each project is one short status sentence + a "Next:" clause. Scannable, not a project doc.
-- **Check-ins** (`dashboard.md`): one `### Name` per person, agenda items as plain bullets (not checkboxes — check-ins recur, they don't complete).
+- **Check-ins** (`dashboard.md`): one `### Name` per person, agenda items as plain bullets (not checkboxes — check-ins recur, they don't complete). Renders as a calm card per person.
+- **Birthdays** (Dashboard): drawn from People notes in `vault/People/` that carry a `**Birthday:** Month Day` line; only the current month shows, and the list hides when empty. Optional.
 - **Don't duplicate across files**: tasks go in Now, project state goes in Projects, people sync goes in Check-ins.
 
 When the user says things like:

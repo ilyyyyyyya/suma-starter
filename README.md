@@ -24,7 +24,8 @@ suma-starter/
     ├── learning.md
     ├── subscriptions.md
     ├── changelog.md
-    └── quotes.md       ← starter quotes for the daily quote (optional)
+    ├── quotes.md       ← starter quotes for the daily quote (optional)
+    └── people/         ← example People notes (drive "Birthdays this month"); copy to vault/People/
 ```
 
 `builds.md` and `toolkit.md` are **auto-generated** by `build.py` (from your code folder and your coding-agent setup) — don't write them by hand.
@@ -35,7 +36,7 @@ suma-starter/
 
 Suma is one HTML page with eight tabs:
 
-1. **Dashboard** — "Now" (project-grouped checkbox to-dos) + "Check-ins" (one section per person you sync with, agenda bullets), with a quietly rotating daily quote up top
+1. **Dashboard** — a daily quote up top, a calendar + activity-heatmap widget row, then "Now" (project-grouped checkbox to-dos as cards), "Check-ins" (one card per person you sync with), and "Birthdays this month"
 2. **Projects** — Overview (~5 portfolio bullets) + Active (Building / Advising) + Idle / Resumable. One line per project: status + "Next:" clause.
 3. **Ideas** — Sketched, not built. Promote into Projects when one earns the time.
 4. **Learning** — Currently reading / Books / Watch / Leisure / Articles / Tools / Design refs / People / Bookmarks. An inventory, not tasks.
@@ -59,6 +60,8 @@ Suma is just one folder in your vault. The markdown sources and the renderer liv
 
 ```
 your-vault/
+├── People/               ← optional: notes with a `**Birthday:** Month Day` line
+│   └── ...                  feed "Birthdays this month" on the Dashboard
 └── Suma/
     ├── build.py          ← the renderer
     ├── dashboard.md
@@ -71,7 +74,7 @@ your-vault/
     └── dashboard.html     ← generated, you open this
 ```
 
-No separate code folder, no sibling paths, no config to edit. Drop the kit's `build.py` and `sources/*.md` into `Suma/`, run it, open the dashboard.
+No separate code folder, no sibling paths, no config to edit. Drop the kit's `build.py` and `sources/*.md` into `Suma/`, run it, open the dashboard. People notes are optional and live one level up in `vault/People/`; without them the birthdays list just stays hidden.
 
 ---
 

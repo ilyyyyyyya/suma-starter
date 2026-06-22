@@ -29,6 +29,14 @@ Copy every file from this kit's `sources/` folder into `~/Desktop/vault/Suma/`:
 - `changelog.md`
 - `quotes.md` — starter quotes for the daily quote on the Dashboard; optional, but it ships filled so the feature works out of the box
 
+The kit's `sources/` also contains a `people/` folder with a few example People notes. These are **not** Suma sources — they drive the "Birthdays this month" list on the Dashboard and live one level up, at the vault root:
+
+```
+cp -R sources/people/. ~/Desktop/vault/People/
+```
+
+Each note just needs a `**Birthday:** Month Day` line; the person's name comes from the filename. People notes are optional — skip this and the birthdays list stays hidden, no error. (For a quick local demo before installing, the renderer also reads `people/` next to `build.py` and the kit's `sources/people/`.)
+
 `builds.md` and `toolkit.md` are **auto-generated** by `build.py` on each run (from your code folder and your coding-agent setup). There's nothing to copy for them, and you should never write them by hand.
 
 ## 4. Drop `build.py` into `vault/Suma/`
@@ -52,7 +60,8 @@ Run through these together — don't dump example content. Ask the user:
 1. **What projects are you working on right now?** Get 2–8 names. Put them as `### Project Name` headers in `dashboard.md` under `## Now`, with one or two tasks under each.
 2. **What's the one-line status of each?** Fill `projects.md` → `## Active` → `### Building`. Format: `- [Name] — what it is, current state. Next: thing.`
 3. **Are any projects idle / dormant / done?** Move them into `## Idle / Resumable`.
-4. **Anyone they sync with regularly?** Add `### Name` under `## Check-ins` in `dashboard.md` with a bullet or two of what to raise next time.
+4. **Anyone they sync with regularly?** Add `### Name` under `## Check-ins` in `dashboard.md` with a bullet or two of what to raise next time. Each person renders as a calm card.
+   - Optional: if they keep People notes in `vault/People/`, add a `**Birthday:** Month Day` line to each so "Birthdays this month" populates on the Dashboard.
 5. **What are they reading / watching / learning?** Seed the relevant sections of `learning.md`. It's fine to leave most sub-sections empty — they'll fill over time.
 6. **Any recurring subscriptions worth tracking?** Optional. Seed `subscriptions.md` with a few real rows (name, amount, renewal date, which card). Fine to leave the template structure and fill later.
 7. **What's a recent change worth logging?** Add today's date as `## YYYY-MM-DD` at the top of `changelog.md` with one or two bullets. This proves the round-trip works.
@@ -92,6 +101,7 @@ When they say things like "update Suma about X" — that means: edit the right `
 ## 10. Sanity-check before handoff
 
 - [ ] `dashboard.html` opens and shows all eight tabs
+- [ ] The Dashboard shows the daily quote (with a working swap button), the calendar (today marked), the activity heatmap, the Now and Check-in cards, and — if People notes have birthdays this month — the birthdays list
 - [ ] Each tab has at least placeholder content (so the user can see what goes where)
 - [ ] Changelog has today's date with one real entry
 - [ ] The user knows the single command to rebuild

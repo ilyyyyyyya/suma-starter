@@ -1,9 +1,10 @@
 # Quotes
-
-A starter set for the daily quote on the Dashboard tab. The renderer picks one
-per day, rotating deterministically. Headings and `---` rules are ignored, so
-keep, cut, or add your own freely. Format: the quote, then `— Attribution` on
-the next line, with a blank line between entries.
+#
+# A starter set for the daily quote on the Dashboard tab. The renderer picks one
+# per day, rotating deterministically, and a swap button cycles to another.
+# Headings (lines starting with #) and `---` rules are ignored, so keep, cut, or
+# add your own freely. Format: the quote, then `— Attribution` on the next line,
+# with a blank line between entries.
 
 ---
 
