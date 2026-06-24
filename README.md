@@ -38,7 +38,7 @@ suma-starter/
 
 Suma is one HTML page with eight tabs:
 
-1. **Dashboard** — a daily quote up top, a calendar + activity-heatmap widget row, then "Now" (project-grouped checkbox to-dos as cards), "Check-ins" (one card per person you sync with), and "Birthdays this month"
+1. **Dashboard** — a daily quote up top, a calendar + activity-heatmap widget row, then "Now" (project-grouped checkbox to-dos as cards), "Check-ins" (one card per person you sync with), "Birthdays this month", and a **token-usage chart** at the bottom — your Claude Code token spend over time, with 7D / 30D / All ranges (auto-scanned; hidden gracefully if you don't use Claude Code)
 2. **Projects** — Overview (~5 portfolio bullets) + Active (Building / Advising) + Idle / Resumable. One line per project: status + "Next:" clause.
 3. **Ideas** — Sketched, not built. Promote into Projects when one earns the time.
 4. **Learning** — Currently reading / Books / Watch / Leisure / Articles / Tools / Design refs / People / Bookmarks. An inventory, not tasks.

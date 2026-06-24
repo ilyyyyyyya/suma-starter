@@ -1481,6 +1481,237 @@ def render_activity_html(counts: dict[_dt.date, int], today: _dt.date) -> str:
     )
 
 
+# ─── Token usage (Claude Code) ──────────────────────────────────────────────
+# Input / output USD per 1M tokens, matched by model-id prefix. Cache writes
+# bill at 1.25x input, cache reads at 0.10x input.
+TOKEN_PRICING = {
+    "claude-fable-5":   (10.0, 50.0),
+    "claude-opus-4-8":  (5.0, 25.0),
+    "claude-opus-4-7":  (5.0, 25.0),
+    "claude-opus-4-6":  (5.0, 25.0),
+    "claude-opus-4-5":  (5.0, 25.0),
+    "claude-sonnet-4-6": (3.0, 15.0),
+    "claude-sonnet-4-5": (3.0, 15.0),
+    "claude-haiku-4-5": (1.0, 5.0),
+}
+
+
+def _token_cost(model: str, in_t: int, cc_t: int, cr_t: int, out_t: int) -> float:
+    rates = None
+    for prefix, r in TOKEN_PRICING.items():
+        if model.startswith(prefix):
+            rates = r
+            break
+    if not rates:
+        return 0.0
+    in_rate, out_rate = rates
+    return (in_t * in_rate + cc_t * in_rate * 1.25 + cr_t * in_rate * 0.10
+            + out_t * out_rate) / 1_000_000
+
+
+def _fmt_tokens(n: int) -> str:
+    if n >= 1_000_000_000:
+        return f"{n / 1_000_000_000:.2f}B"
+    if n >= 1_000_000:
+        return f"{n / 1_000_000:.1f}M"
+    if n >= 1_000:
+        return f"{n / 1_000:.0f}K"
+    return str(n)
+
+
+def _model_label(model: str) -> str:
+    return model.replace("claude-", "").replace("-20251001", "")
+
+
+def scan_token_usage() -> dict:
+    """Per-day, per-model Claude Code token usage from ~/.claude/projects."""
+    base = Path.home() / ".claude" / "projects"
+    if not base.exists():
+        return {}
+    by_day: dict[str, dict] = {}   # iso -> {"t": int, "c": float, "m": {label: [t, c]}}
+    seen: set[str] = set()
+    for f in base.rglob("*.jsonl"):
+        try:
+            fh = f.open(encoding="utf-8")
+        except OSError:
+            continue
+        with fh:
+            for line in fh:
+                if '"usage"' not in line:
+                    continue
+                try:
+                    o = json.loads(line)
+                except (ValueError, TypeError):
+                    continue
+                msg = o.get("message") or {}
+                u = msg.get("usage") or o.get("usage")
+                if not u:
+                    continue
+                mid = o.get("requestId") or o.get("uuid")
+                if mid:
+                    if mid in seen:
+                        continue
+                    seen.add(mid)
+                day = (o.get("timestamp") or "")[:10]
+                if not day:
+                    continue
+                model = msg.get("model") or o.get("model") or "unknown"
+                in_t = u.get("input_tokens", 0) or 0
+                cc_t = u.get("cache_creation_input_tokens", 0) or 0
+                cr_t = u.get("cache_read_input_tokens", 0) or 0
+                out_t = u.get("output_tokens", 0) or 0
+                tok = in_t + cc_t + cr_t + out_t
+                cost = _token_cost(model, in_t, cc_t, cr_t, out_t)
+                rec = by_day.setdefault(day, {"t": 0, "c": 0.0, "m": {}})
+                rec["t"] += tok
+                rec["c"] += cost
+                mm = rec["m"].setdefault(_model_label(model), [0, 0.0])
+                mm[0] += tok
+                mm[1] += cost
+    return {"by_day": by_day}
+
+
+_USAGE_JS = r"""
+(function(){
+  var UD=__DATA__;
+  var W=document.getElementById('uW');if(!W||!UD.length)return;
+  var elBig=document.getElementById('uBig'),elMeta=document.getElementById('uMeta'),
+      elDelta=document.getElementById('uDelta'),elSub=document.getElementById('uSub'),
+      elY=document.getElementById('uY'),elGrid=document.getElementById('uGrid'),
+      elBars=document.getElementById('uBars'),elX=document.getElementById('uX'),
+      elModels=document.getElementById('uModels'),chart=document.getElementById('uChart'),
+      cross=document.getElementById('uCross'),call=document.getElementById('uCallout'),
+      cDay=document.getElementById('uCalDay'),cVal=document.getElementById('uCalVal'),
+      cCost=document.getElementById('uCalCost');
+  var segs=W.querySelectorAll('.usage-seg button');
+  function ftk(n){if(n>=1e9)return (n/1e9).toFixed(2)+'B';if(n>=1e6)return (n/1e6).toFixed(1)+'M';if(n>=1e3)return (n/1e3).toFixed(0)+'K';return ''+Math.round(n);}
+  function fax(n){return ftk(n).replace('.0M','M').replace('.0B','B').replace('.0K','K');}
+  function mny(n){if(!n)return '$0';if(n>=100)return '$'+Math.round(n).toLocaleString();if(n>=10)return '$'+n.toFixed(0);return '$'+n.toFixed(2);}
+  function niceMax(x){if(x<=0)return 1;var e=Math.floor(Math.log10(x)),b=Math.pow(10,e),f=x/b,o=[1,1.5,2,2.5,3,4,5,7.5,10],i;for(i=0;i<o.length;i++)if(f<=o[i])return o[i]*b;return 10*b;}
+  function merge(days){var m={},i,k;for(i=0;i<days.length;i++)for(k in days[i].m){if(!m[k])m[k]=[0,0];m[k][0]+=days[i].m[k][0];m[k][1]+=days[i].m[k][1];}return m;}
+  function weekly(days){var out=[],i;for(i=0;i<days.length;i+=7){var ch=days.slice(i,i+7),t=0,c=0,j;for(j=0;j<ch.length;j++){t+=ch[j].t;c+=ch[j].c;}out.push({l:ch[0].l,t:t,c:c,m:merge(ch),wk:1});}return out;}
+
+  var range='30',bars=[],cur=[],ncur=0,rBig='',rMeta='';
+  function activeDaily(){if(range==='all')return UD.slice();var n=range==='7'?7:30;return UD.slice(Math.max(0,UD.length-n));}
+  function prevDaily(){if(range==='all')return [];var n=range==='7'?7:30,e=UD.length-n;return UD.slice(Math.max(0,e-n),e);}
+
+  function render(){
+    var daily=activeDaily();
+    var disp=daily.length>56?weekly(daily):daily.slice();
+    var n=disp.length,i,maxT=0;
+    for(i=0;i<n;i++)if(disp[i].t>maxT)maxT=disp[i].t;
+    var nm=niceMax(maxT||1),fr=[1,0.75,0.5,0.25,0],yh='',gh='',k;
+    for(k=0;k<fr.length;k++){var top=(1-fr[k])*100,v=fr[k]===0?'0':fax(Math.round(nm*fr[k]));
+      yh+='<div class="usage-ylabel" style="top:'+top+'%">'+v+'</div>';
+      gh+='<div class="usage-gridline" style="top:'+top+'%"></div>';}
+    elY.innerHTML=yh;elGrid.innerHTML=gh;
+    var busi=0;for(i=0;i<n;i++)if(disp[i].t>disp[busi].t)busi=i;
+    var bh='';for(i=0;i<n;i++){var hp=disp[i].t/nm*100;bh+='<div class="usage-bar'+(disp[i].t&&i===busi?' is-max':'')+'" style="height:'+hp+'%"></div>';}
+    elBars.innerHTML=bh;bars=elBars.querySelectorAll('.usage-bar');
+    var step=Math.max(1,Math.ceil(n/6)),xh='';
+    for(i=0;i<n;i++)if(i%step===0||i===n-1){var left=((i+0.5)/n)*100;xh+='<span style="left:'+left+'%">'+disp[i].l+'</span>';}
+    elX.innerHTML=xh;
+    var tot=0,cost=0,act=0,bd=null;
+    for(i=0;i<daily.length;i++){tot+=daily[i].t;cost+=daily[i].c;if(daily[i].t>0)act++;if(!bd||daily[i].t>bd.t)bd=daily[i];}
+    rBig=ftk(tot)+'<span class="usage-unit">tokens</span>';
+    rMeta=mny(cost)+' estimated · '+act+' active day'+(act===1?'':'s')+((bd&&bd.t)?(' · busiest '+bd.l):'');
+    elBig.innerHTML=rBig;elMeta.textContent=rMeta;
+    var pv=prevDaily(),pt=0;for(i=0;i<pv.length;i++)pt+=pv[i].t;
+    if(range!=='all'&&pt>0){var dp=Math.round((tot-pt)/pt*100);elDelta.textContent=dp===0?'≈ even vs prev':((dp>0?'▲ ':'▼ ')+Math.abs(dp)+'% vs prev');elDelta.hidden=false;}
+    else elDelta.hidden=true;
+    elSub.textContent='Claude Code · '+daily[0].l+' – '+daily[daily.length-1].l+(disp.length&&disp[0].wk?' · weekly':' · daily');
+    var mm=merge(daily),arr=[],key;for(key in mm)if(mm[key][0])arr.push([key,mm[key][0],mm[key][1]]);
+    arr.sort(function(a,b){return b[2]-a[2];});
+    var mx=arr.length?arr[0][1]:1,mh='';
+    for(i=0;i<arr.length;i++){var w=arr[i][1]/mx*100;mh+='<li><span class="um-name">'+arr[i][0]+'</span><span class="um-bar"><span class="um-fill" style="width:'+w+'%"></span></span><span class="um-val">'+ftk(arr[i][1])+' · '+mny(arr[i][2])+'</span></li>';}
+    elModels.innerHTML=mh;
+    cur=disp;ncur=n;
+  }
+  function showHover(i){
+    var x=cur[i],j;for(j=0;j<bars.length;j++)bars[j].classList.toggle('is-sel',j===i);
+    var p=((i+0.5)/ncur)*100;
+    cross.style.left=p+'%';cross.hidden=false;
+    call.style.left=Math.max(7,Math.min(93,p))+'%';call.hidden=false;
+    cDay.textContent=(x.wk?'wk '+x.l:x.l);cVal.textContent=ftk(x.t)+' tok';cCost.textContent=x.t?' · '+mny(x.c):'';
+    elBig.innerHTML=ftk(x.t)+'<span class="usage-unit">tokens</span>';
+    elMeta.textContent=(x.wk?'wk '+x.l:x.l)+' · '+(x.t?mny(x.c)+' estimated':'no usage');
+  }
+  function clearHover(){var j;for(j=0;j<bars.length;j++)bars[j].classList.remove('is-sel');cross.hidden=true;call.hidden=true;elBig.innerHTML=rBig;elMeta.textContent=rMeta;}
+  chart.addEventListener('pointermove',function(e){var r=chart.getBoundingClientRect();var i=Math.floor((e.clientX-r.left)/r.width*ncur);if(i<0)i=0;if(i>=ncur)i=ncur-1;showHover(i);});
+  chart.addEventListener('pointerleave',clearHover);
+  function setRange(r){range=r;for(var k=0;k<segs.length;k++)segs[k].classList.toggle('active',segs[k].getAttribute('data-r')===r);render();}
+  for(var s=0;s<segs.length;s++)(function(b){b.addEventListener('click',function(){setRange(b.getAttribute('data-r'));});})(segs[s]);
+  setRange('30');
+})();
+"""
+
+
+def render_usage_html(usage: dict) -> str:
+    if not usage or not usage.get("by_day"):
+        return ('<section class="usage-widget"><div class="usage-top">'
+                '<span class="usage-label">TOKEN USAGE</span></div>'
+                '<p class="usage-meta">No usage data found in '
+                '<code>~/.claude/projects</code>.</p></section>')
+
+    by_day = usage["by_day"]
+    days_sorted = sorted(by_day)
+    start = _dt.date.fromisoformat(days_sorted[0])
+    end = _dt.date.fromisoformat(days_sorted[-1])
+
+    # continuous daily series (gap-filled), each with its per-model split
+    series = []
+    d = start
+    while d <= end:
+        rec = by_day.get(d.isoformat())
+        if rec:
+            mdl = {k: [v[0], round(v[1], 4)] for k, v in rec["m"].items()}
+            series.append({"l": d.strftime("%-d %b"), "t": rec["t"],
+                           "c": round(rec["c"], 4), "m": mdl})
+        else:
+            series.append({"l": d.strftime("%-d %b"), "t": 0, "c": 0, "m": {}})
+        d += _dt.timedelta(days=1)
+
+    data = json.dumps(series, separators=(",", ":")).replace("</", "<\\/")
+    script = _USAGE_JS.replace("__DATA__", data)
+
+    return (
+        '<section class="usage-widget" id="uW" aria-label="Token usage">'
+        '<div class="usage-top">'
+        '<span class="usage-label">TOKEN USAGE</span>'
+        '<div class="usage-seg" role="group" aria-label="Time range">'
+        '<button type="button" data-r="7">7D</button>'
+        '<button type="button" data-r="30">30D</button>'
+        '<button type="button" data-r="all">All</button>'
+        '</div></div>'
+        '<div class="usage-readout">'
+        '<div class="usage-bigrow">'
+        '<div class="usage-big" id="uBig"></div>'
+        '<span class="usage-delta" id="uDelta" hidden></span>'
+        '</div>'
+        '<div class="usage-meta" id="uMeta"></div>'
+        '<div class="usage-sub" id="uSub"></div>'
+        '</div>'
+        '<div class="usage-plot" id="uPlot">'
+        '<div class="usage-yaxis" id="uY"></div>'
+        '<div class="usage-chart" id="uChart">'
+        '<div class="usage-grid" id="uGrid"></div>'
+        '<div class="usage-bars" id="uBars"></div>'
+        '<div class="usage-cross" id="uCross" hidden></div>'
+        '<div class="usage-callout" id="uCallout" hidden>'
+        '<div class="uc-box"><span id="uCalDay"></span> · <span id="uCalVal"></span>'
+        '<span class="uc-cost" id="uCalCost"></span></div>'
+        '<div class="uc-caret"></div></div>'
+        '</div></div>'
+        '<div class="usage-xaxis" id="uX"></div>'
+        '<h4 class="usage-h">By model</h4>'
+        '<ul class="usage-models" id="uModels"></ul>'
+        '<p class="usage-foot">Cost estimated at API list rates '
+        '(cache writes 1.25×, reads 0.1×); actual billing depends on your plan.</p>'
+        f'<script>{script}</script>'
+        '</section>'
+    )
+
+
 def favicon_data_uri(logo_inner: str) -> str:
     """Suma wordmark on a rounded near-black tile, as an inline SVG data URI."""
     scale = 76 / 2061
@@ -2321,6 +2552,228 @@ HTML_SHELL = """<!doctype html>
     .widget-row > .act-widget {{ flex: 1 1 100%; }}
   }}
 
+  /* ─── Usage widget ─── */
+  .usage-widget {{
+    background: var(--color-midnight-ink);
+    border-radius: 18px;
+    box-shadow: var(--inset-subtle);
+    padding: 20px 22px 22px;
+    margin-top: 28px;
+  }}
+  .usage-top {{
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 12px;
+    flex-wrap: wrap;
+    margin-bottom: 14px;
+  }}
+  .usage-label {{
+    font-family: var(--font-mono);
+    font-size: 11px;
+    font-weight: 500;
+    letter-spacing: 0.5px;
+    color: var(--color-electric-blue);
+  }}
+  .usage-seg {{
+    display: inline-flex;
+    gap: 2px;
+    padding: 2px;
+    background: var(--color-stormy-night);
+    border-radius: 8px;
+  }}
+  .usage-seg button {{
+    font-family: var(--font-mono);
+    font-size: 11px;
+    letter-spacing: 0.3px;
+    color: var(--color-ash-gray);
+    background: transparent;
+    border: none;
+    padding: 3px 11px;
+    border-radius: 6px;
+    cursor: pointer;
+  }}
+  .usage-seg button.active {{
+    background: var(--color-midnight-ink);
+    color: var(--color-cloud-white);
+    box-shadow: var(--inset-subtle);
+  }}
+  .usage-readout {{ margin-bottom: 16px; }}
+  .usage-bigrow {{ display: flex; align-items: baseline; gap: 10px; }}
+  .usage-big {{
+    font-size: 30px;
+    font-weight: 500;
+    line-height: 1.1;
+    letter-spacing: -0.5px;
+  }}
+  .usage-big .usage-unit {{
+    font-size: 15px;
+    font-weight: 400;
+    color: var(--color-ash-gray);
+    margin-left: 3px;
+  }}
+  .usage-delta {{
+    font-family: var(--font-mono);
+    font-size: 12px;
+    color: var(--color-ash-gray);
+  }}
+  .usage-meta {{
+    font-size: 13px;
+    color: var(--color-ash-gray);
+    margin-top: 3px;
+  }}
+  .usage-sub {{
+    font-family: var(--font-mono);
+    font-size: 11px;
+    color: var(--color-charcoal-border);
+    margin-top: 6px;
+  }}
+  .usage-plot {{
+    position: relative;
+    display: flex;
+    gap: 10px;
+    height: 174px;
+    padding-top: 28px;
+  }}
+  .usage-yaxis {{ position: relative; flex: 0 0 44px; }}
+  .usage-ylabel {{
+    position: absolute;
+    right: 0;
+    transform: translateY(-50%);
+    text-align: right;
+    white-space: nowrap;
+    font-family: var(--font-mono);
+    font-size: 10px;
+    color: var(--color-ash-gray);
+  }}
+  .usage-chart {{ position: relative; flex: 1 1 auto; min-width: 0; cursor: crosshair; }}
+  .usage-grid {{ position: absolute; inset: 0; z-index: 0; }}
+  .usage-gridline {{
+    position: absolute;
+    left: 0;
+    right: 0;
+    border-top: 1px solid var(--color-stormy-night);
+  }}
+  .usage-bars {{
+    position: absolute;
+    inset: 0;
+    z-index: 1;
+    display: flex;
+    align-items: flex-end;
+    gap: 2px;
+  }}
+  .usage-bar {{
+    flex: 1 1 0;
+    min-width: 0;
+    background: var(--color-ash-gray);
+    border-radius: 2px 2px 0 0;
+    min-height: 1px;
+    opacity: 0.42;
+  }}
+  .usage-bar.is-max {{ opacity: 0.62; }}
+  .usage-bar.is-sel {{ background: var(--color-cloud-white); opacity: 1; }}
+  .usage-cross {{
+    position: absolute;
+    top: 0;
+    bottom: 0;
+    width: 1px;
+    background: var(--color-cloud-white);
+    opacity: 0.25;
+    pointer-events: none;
+    transform: translateX(-0.5px);
+    z-index: 2;
+  }}
+  .usage-callout {{
+    position: absolute;
+    bottom: 100%;
+    margin-bottom: 4px;
+    transform: translateX(-50%);
+    pointer-events: none;
+    z-index: 3;
+  }}
+  .usage-callout .uc-box {{
+    display: inline-block;
+    background: var(--color-cloud-white);
+    color: var(--color-midnight-ink);
+    font-family: var(--font-mono);
+    font-size: 10px;
+    letter-spacing: 0.04em;
+    line-height: 1.35;
+    padding: 4px 8px;
+    border-radius: 5px;
+    white-space: nowrap;
+    text-align: center;
+  }}
+  .usage-callout .uc-caret {{
+    width: 0;
+    height: 0;
+    margin: 0 auto;
+    border-left: 5px solid transparent;
+    border-right: 5px solid transparent;
+    border-top: 5px solid var(--color-cloud-white);
+  }}
+  .usage-callout .uc-cost {{ opacity: 0.6; }}
+  .usage-xaxis {{
+    position: relative;
+    height: 16px;
+    margin: 8px 0 0 54px;
+  }}
+  .usage-xaxis span {{
+    position: absolute;
+    transform: translateX(-50%);
+    font-family: var(--font-mono);
+    font-size: 10px;
+    color: var(--color-ash-gray);
+    white-space: nowrap;
+  }}
+  .usage-h {{
+    margin: 24px 0 4px;
+    font-size: 13px;
+    font-family: var(--font-mono);
+    font-weight: 500;
+    letter-spacing: 0.5px;
+    color: var(--color-ash-gray);
+  }}
+  .usage-models {{ list-style: none; padding: 0; margin: 0; }}
+  .usage-models li {{
+    display: flex;
+    justify-content: space-between;
+    align-items: baseline;
+    gap: 12px;
+    padding: 9px 0;
+    border-bottom: 1px solid var(--color-stormy-night);
+    font-size: 14px;
+  }}
+  .usage-models li:last-child {{ border-bottom: none; }}
+  .usage-models .um-bar {{
+    flex: 1 1 auto;
+    height: 6px;
+    border-radius: 3px;
+    background: var(--color-stormy-night);
+    overflow: hidden;
+    max-width: 220px;
+  }}
+  .usage-models .um-fill {{
+    display: block;
+    height: 100%;
+    background: var(--color-ash-gray);
+    border-radius: 3px;
+  }}
+  .usage-models .um-name {{ color: var(--color-cloud-white); min-width: 84px; }}
+  .usage-models .um-val {{
+    color: var(--color-ash-gray);
+    font-family: var(--font-mono);
+    font-size: 12px;
+    min-width: 116px;
+    text-align: right;
+  }}
+  .usage-foot {{
+    font-size: 12px;
+    color: var(--color-ash-gray);
+    margin-top: 16px;
+    line-height: 1.5;
+  }}
+
   /* ─── Calendar widget ─── */
   .cal-widget {{
     background: var(--color-midnight-ink);
@@ -2446,6 +2899,7 @@ HTML_SHELL = """<!doctype html>
         {checkins_body}
         {birthdays_block}
       </main>
+      {usage_body}
     </section>
 
     <section id="view-projects" class="view" role="tabpanel" hidden>
@@ -2725,6 +3179,8 @@ def main() -> None:
     toolkit_toc, toolkit_body = render_toolkit_html(kit)
     TOOLKIT_OUT.write_text(render_toolkit_md(kit), encoding="utf-8")
 
+    usage_body = render_usage_html(scan_token_usage())
+
     OUT.write_text(
         HTML_SHELL.format(
             updated=html.escape(updated),
@@ -2744,6 +3200,7 @@ def main() -> None:
             builds_body=builds_body,
             toolkit_toc=toolkit_toc,
             toolkit_body=toolkit_body,
+            usage_body=usage_body,
             changelog_body=changelog_body,
             quote_block=quote_block,
         ),

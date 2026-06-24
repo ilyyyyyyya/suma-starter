@@ -111,6 +111,14 @@ Don't reorder. Dashboard is where the user lands every time, so it must be tab o
 - Source is People notes with a `**Birthday:** Month Day` line. The renderer looks in `vault/People/` (installed layout), then a `people/` folder next to `build.py`, then the kit's `sources/people/` staging copy.
 - Today's birthday is highlighted and labelled "Today"; earlier days this month are dimmed.
 
+## Token usage
+
+- A widget at the **bottom of the Dashboard** showing Claude Code token spend over time. Built entirely in `build.py` (`scan_token_usage` / `render_usage_html`) — it reads the JSONL session transcripts under `~/.claude/projects`, so there is no source `.md` file.
+- A `7D / 30D / All` segmented control switches the window; the bar chart, y-axis, totals, and per-model breakdown all re-render client-side. A `% vs prev` delta compares the window to the one before it. Hover a bar for a day's exact tokens + estimated cost.
+- Cost is **estimated** at API list rates (cache writes 1.25×, reads 0.1×); it is not your actual bill, which depends on your plan. Labelled as such in the footer.
+- Stays calm: monochrome bars, quiet gridlines, no coloured KPI tiles. If `~/.claude/projects` is absent (e.g. you don't use Claude Code), it renders a quiet empty state.
+- **Retention caveat:** Claude Code deletes session transcripts older than `cleanupPeriodDays` (default 30). "All" can only show data still on disk, so raise that setting in `~/.claude/settings.json` if you want the chart to accumulate real history. See SETUP.md.
+
 ## Ideas
 
 - Plain bulleted list. No subsections.
