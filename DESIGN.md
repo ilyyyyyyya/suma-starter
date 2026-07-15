@@ -18,10 +18,11 @@ Quiet text and whitespace IS the design. Suma is for the user to read back, not 
 
 **Carved exceptions (Dashboard widgets):**
 
-Two Dashboard widgets bend the "no charts" rule, deliberately and quietly:
+Three Dashboard widgets bend the "no charts" rule, deliberately and quietly:
 
 - **Calendar** — a plain current-month grid, today marked with a single filled dot. No data, no trend line.
-- **Activity heatmap** — a contribution-graph grid built from changelog dates. This is the one chart in Suma. It is allowed *only* because it stays inside the calm palette: a monochrome ink ramp (not GitHub blue), no axes, no numbers in the grid, just five shaded levels and a one-line text meta. If you add any other chart, sparkline, or graph anywhere else, you are breaking the rule — these two are the whole budget.
+- **Activity heatmap** — a contribution-graph grid built from changelog dates. It is allowed *only* because it stays inside the calm palette: a monochrome ink ramp (not GitHub blue), no axes, no numbers in the grid, just five shaded levels and a one-line text meta. If you add any other chart, sparkline, or graph anywhere else, you are breaking the rule; these three widgets are the whole budget.
+- **Token usage** — a compact daily bar chart for Claude Code and Codex, followed by quiet provider and model comparisons. The chart stays monochrome; OpenAI gets one restrained blue accent in the comparison rows.
 
 **Do keep:**
 
@@ -113,11 +114,14 @@ Don't reorder. Dashboard is where the user lands every time, so it must be tab o
 
 ## Token usage
 
-- A widget at the **bottom of the Dashboard** showing Claude Code token spend over time. Built entirely in `build.py` (`scan_token_usage` / `render_usage_html`) — it reads the JSONL session transcripts under `~/.claude/projects`, so there is no source `.md` file.
-- A `7D / 30D / All` segmented control switches the window; the bar chart, y-axis, totals, and per-model breakdown all re-render client-side. A `% vs prev` delta compares the window to the one before it. Hover a bar for a day's exact tokens + estimated cost.
-- Cost is **estimated** at API list rates (cache writes 1.25×, reads 0.1×); it is not your actual bill, which depends on your plan. Labelled as such in the footer.
-- Stays calm: monochrome bars, quiet gridlines, no coloured KPI tiles. If `~/.claude/projects` is absent (e.g. you don't use Claude Code), it renders a quiet empty state.
+- A widget at the **bottom of the Dashboard** showing Claude Code and Codex token usage over time. Built entirely in `build.py` (`scan_token_usage` / `render_usage_html`), it reads local JSONL session logs under `~/.claude/projects`, `~/.codex/sessions`, and `~/.codex/archived_sessions`; there is no source `.md` file.
+- A `7D / 30D / All` segmented control switches the window; the chart, totals, provider comparison, and aligned per-model breakdown all re-render client-side. A `% vs prev` delta compares the window to the one before it. Hover a bar for the day's exact tokens and API-rate equivalent.
+- Cost is an **API-rate equivalent**, not actual subscription spend. Cache pricing and long-context multipliers are applied where the public rate card provides them. Codex auto-review uses the public GPT-5.3-Codex rate as a proxy; old token-only records use observed averages. Unknown models show `n/a` instead of pretending zero cost.
+- Provider pricing tables live beside `scan_token_usage` in `build.py`. Update them deliberately when public list prices or model labels change.
+- Stays calm: monochrome chart bars, quiet gridlines, compact provider summaries, and one restrained blue accent for OpenAI comparison bars. If neither log location exists, it renders a quiet empty state.
+- The model list uses one shared three-column grid for model, bar, and values. Every horizontal bar must start and end on the same coordinates.
 - **Retention caveat:** Claude Code deletes session transcripts older than `cleanupPeriodDays` (default 30). "All" can only show data still on disk, so raise that setting in `~/.claude/settings.json` if you want the chart to accumulate real history. See SETUP.md.
+- **Privacy:** only dates, model labels, and token counts are embedded in the generated local page. Prompts and responses are never copied. `dashboard.html` is private generated output and stays ignored by git.
 
 ## Ideas
 
