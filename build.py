@@ -1481,10 +1481,10 @@ def render_activity_html(counts: dict[_dt.date, int], today: _dt.date) -> str:
     )
 
 
-# ─── Token usage (Claude Code) ──────────────────────────────────────────────
-# Input / output USD per 1M tokens, matched by model-id prefix. Cache writes
-# bill at 1.25x input, cache reads at 0.10x input.
-TOKEN_PRICING = {
+# ─── Token usage (Claude Code + Codex) ──────────────────────────────────────
+# Public API text-token rates in USD per 1M tokens. These estimate an API-rate
+# equivalent from local logs, not the user's actual subscription charge.
+ANTHROPIC_TOKEN_PRICING = {
     "claude-fable-5":   (10.0, 50.0),
     "claude-opus-4-8":  (5.0, 25.0),
     "claude-opus-4-7":  (5.0, 25.0),
@@ -1492,21 +1492,60 @@ TOKEN_PRICING = {
     "claude-opus-4-5":  (5.0, 25.0),
     "claude-sonnet-4-6": (3.0, 15.0),
     "claude-sonnet-4-5": (3.0, 15.0),
+    # Introductory rate through 2026-08-31; standard rate is handled below.
+    "claude-sonnet-5":   (2.0, 10.0),
     "claude-haiku-4-5": (1.0, 5.0),
 }
 
 
-def _token_cost(model: str, in_t: int, cc_t: int, cr_t: int, out_t: int) -> float:
+OPENAI_TOKEN_PRICING = {
+    # input, cached input, output
+    "gpt-5.6-sol": (5.0, 0.50, 30.0),
+    "gpt-5.6":     (5.0, 0.50, 30.0),
+    "gpt-5.5":     (5.0, 0.50, 30.0),
+    "gpt-5.4":     (2.5, 0.25, 15.0),
+    "gpt-5.3-codex": (1.75, 0.175, 14.0),
+    # Internal label; use the public GPT-5.3-Codex review rate as a proxy.
+    "codex-auto-review": (1.75, 0.175, 14.0),
+}
+
+
+def _anthropic_token_cost(
+    model: str, in_t: int, cc_t: int, cr_t: int, out_t: int, day: str
+) -> float | None:
     rates = None
-    for prefix, r in TOKEN_PRICING.items():
+    for prefix, r in ANTHROPIC_TOKEN_PRICING.items():
         if model.startswith(prefix):
             rates = r
             break
     if not rates:
-        return 0.0
+        return None
     in_rate, out_rate = rates
+    if model.startswith("claude-sonnet-5") and day > "2026-08-31":
+        in_rate, out_rate = 3.0, 15.0
     return (in_t * in_rate + cc_t * in_rate * 1.25 + cr_t * in_rate * 0.10
             + out_t * out_rate) / 1_000_000
+
+
+def _openai_token_cost(
+    model: str, in_t: int, cached_t: int, out_t: int
+) -> float | None:
+    rates = None
+    for prefix, r in OPENAI_TOKEN_PRICING.items():
+        if model == prefix or model.startswith(prefix + "-20"):
+            rates = r
+            break
+    if not rates:
+        return None
+    in_rate, cached_rate, out_rate = rates
+    cached_t = min(in_t, cached_t)
+    uncached_t = max(0, in_t - cached_t)
+    # GPT-5.4+ frontier rates apply a long-context multiplier above 272K input.
+    long_context = model.startswith(("gpt-5.4", "gpt-5.5", "gpt-5.6"))
+    in_mult = 2.0 if long_context and in_t > 272_000 else 1.0
+    out_mult = 1.5 if long_context and in_t > 272_000 else 1.0
+    return ((uncached_t * in_rate + cached_t * cached_rate) * in_mult
+            + out_t * out_rate * out_mult) / 1_000_000
 
 
 def _fmt_tokens(n: int) -> str:
@@ -1519,55 +1558,162 @@ def _fmt_tokens(n: int) -> str:
     return str(n)
 
 
-def _model_label(model: str) -> str:
-    return model.replace("claude-", "").replace("-20251001", "")
+def _model_label(provider: str, model: str) -> str:
+    if provider == "Anthropic":
+        model = model.replace("claude-", "").replace("-20251001", "")
+    return f"{provider} · {model}"
+
+
+def _record_token_usage(
+    by_day: dict[str, dict], day: str, provider: str, model: str,
+    tok: int, cost: float | None,
+) -> None:
+    if not day or tok <= 0:
+        return
+    rec = by_day.setdefault(day, {"t": 0, "c": 0.0, "u": 0, "m": {}})
+    rec["t"] += tok
+    if cost is None:
+        rec["u"] += tok
+    else:
+        rec["c"] += cost
+    label = _model_label(provider, model)
+    mm = rec["m"].setdefault(label, [0, 0.0, provider, 0])
+    mm[0] += tok
+    if cost is None:
+        mm[3] += tok
+    else:
+        mm[1] += cost
+
+
+def _impute_partial_log_costs(by_day: dict[str, dict]) -> None:
+    """Estimate old token-only records from observed model/provider averages."""
+    model_rates: dict[str, list[float]] = {}
+    provider_rates: dict[str, list[float]] = {}
+    for rec in by_day.values():
+        for label, mm in rec["m"].items():
+            priced_tokens = mm[0] - mm[3]
+            if priced_tokens <= 0 or mm[1] <= 0:
+                continue
+            model_stat = model_rates.setdefault(label, [0.0, 0.0])
+            model_stat[0] += priced_tokens
+            model_stat[1] += mm[1]
+            provider_stat = provider_rates.setdefault(mm[2], [0.0, 0.0])
+            provider_stat[0] += priced_tokens
+            provider_stat[1] += mm[1]
+
+    for rec in by_day.values():
+        for label, mm in rec["m"].items():
+            missing = mm[3]
+            if missing <= 0:
+                continue
+            stat = model_rates.get(label) or provider_rates.get(mm[2])
+            if not stat or stat[0] <= 0:
+                continue
+            added_cost = missing * stat[1] / stat[0]
+            mm[1] += added_cost
+            mm[3] = 0
+            rec["c"] += added_cost
+            rec["u"] = max(0, rec["u"] - missing)
 
 
 def scan_token_usage() -> dict:
-    """Per-day, per-model Claude Code token usage from ~/.claude/projects."""
+    """Per-day Claude Code and Codex usage from their local JSONL logs."""
+    # iso -> {"t": tokens, "c": priced cost, "u": unmatched tokens,
+    #         "m": {label: [tokens, cost, provider, unmatched tokens]}}
+    by_day: dict[str, dict] = {}
+
     base = Path.home() / ".claude" / "projects"
-    if not base.exists():
-        return {}
-    by_day: dict[str, dict] = {}   # iso -> {"t": int, "c": float, "m": {label: [t, c]}}
     seen: set[str] = set()
-    for f in base.rglob("*.jsonl"):
-        try:
-            fh = f.open(encoding="utf-8")
-        except OSError:
-            continue
-        with fh:
-            for line in fh:
-                if '"usage"' not in line:
-                    continue
-                try:
-                    o = json.loads(line)
-                except (ValueError, TypeError):
-                    continue
-                msg = o.get("message") or {}
-                u = msg.get("usage") or o.get("usage")
-                if not u:
-                    continue
-                mid = o.get("requestId") or o.get("uuid")
-                if mid:
-                    if mid in seen:
+    if base.exists():
+        for f in base.rglob("*.jsonl"):
+            try:
+                fh = f.open(encoding="utf-8")
+            except OSError:
+                continue
+            with fh:
+                for line in fh:
+                    if '"usage"' not in line:
                         continue
-                    seen.add(mid)
-                day = (o.get("timestamp") or "")[:10]
-                if not day:
-                    continue
-                model = msg.get("model") or o.get("model") or "unknown"
-                in_t = u.get("input_tokens", 0) or 0
-                cc_t = u.get("cache_creation_input_tokens", 0) or 0
-                cr_t = u.get("cache_read_input_tokens", 0) or 0
-                out_t = u.get("output_tokens", 0) or 0
-                tok = in_t + cc_t + cr_t + out_t
-                cost = _token_cost(model, in_t, cc_t, cr_t, out_t)
-                rec = by_day.setdefault(day, {"t": 0, "c": 0.0, "m": {}})
-                rec["t"] += tok
-                rec["c"] += cost
-                mm = rec["m"].setdefault(_model_label(model), [0, 0.0])
-                mm[0] += tok
-                mm[1] += cost
+                    try:
+                        o = json.loads(line)
+                    except (ValueError, TypeError):
+                        continue
+                    msg = o.get("message") or {}
+                    u = msg.get("usage") or o.get("usage")
+                    if not u:
+                        continue
+                    mid = o.get("requestId") or o.get("uuid")
+                    if mid:
+                        if mid in seen:
+                            continue
+                        seen.add(mid)
+                    day = (o.get("timestamp") or "")[:10]
+                    model = msg.get("model") or o.get("model") or "unknown"
+                    in_t = u.get("input_tokens", 0) or 0
+                    cc_t = u.get("cache_creation_input_tokens", 0) or 0
+                    cr_t = u.get("cache_read_input_tokens", 0) or 0
+                    out_t = u.get("output_tokens", 0) or 0
+                    tok = in_t + cc_t + cr_t + out_t
+                    cost = _anthropic_token_cost(
+                        model, in_t, cc_t, cr_t, out_t, day
+                    )
+                    _record_token_usage(
+                        by_day, day, "Anthropic", model, tok, cost
+                    )
+
+    codex_roots = (
+        Path.home() / ".codex" / "sessions",
+        Path.home() / ".codex" / "archived_sessions",
+    )
+    seen_files: set[str] = set()
+    for root in codex_roots:
+        if not root.exists():
+            continue
+        for f in root.rglob("*.jsonl"):
+            # Sessions move into archived_sessions. Guard against a copy
+            # briefly existing in both places during a rebuild.
+            if f.name in seen_files:
+                continue
+            seen_files.add(f.name)
+            model = "unknown"
+            try:
+                fh = f.open(encoding="utf-8")
+            except OSError:
+                continue
+            with fh:
+                for line in fh:
+                    if '"turn_context"' not in line and '"token_count"' not in line:
+                        continue
+                    try:
+                        o = json.loads(line)
+                    except (ValueError, TypeError):
+                        continue
+                    payload = o.get("payload") or {}
+                    if o.get("type") == "turn_context":
+                        model = payload.get("model") or model
+                        continue
+                    if (o.get("type") != "event_msg"
+                            or payload.get("type") != "token_count"):
+                        continue
+                    info = payload.get("info") or {}
+                    u = info.get("last_token_usage") or {}
+                    if not u:
+                        continue
+                    day = (o.get("timestamp") or "")[:10]
+                    in_t = u.get("input_tokens", 0) or 0
+                    cached_t = u.get("cached_input_tokens", 0) or 0
+                    out_t = u.get("output_tokens", 0) or 0
+                    tok = in_t + out_t
+                    if not tok:
+                        tok = u.get("total_tokens", 0) or 0
+                    cost = None
+                    if in_t or out_t:
+                        cost = _openai_token_cost(model, in_t, cached_t, out_t)
+                    _record_token_usage(
+                        by_day, day, "OpenAI", model, tok, cost
+                    )
+
+    _impute_partial_log_costs(by_day)
     return {"by_day": by_day}
 
 
@@ -1579,6 +1725,7 @@ _USAGE_JS = r"""
       elDelta=document.getElementById('uDelta'),elSub=document.getElementById('uSub'),
       elY=document.getElementById('uY'),elGrid=document.getElementById('uGrid'),
       elBars=document.getElementById('uBars'),elX=document.getElementById('uX'),
+      elProviders=document.getElementById('uProviders'),
       elModels=document.getElementById('uModels'),chart=document.getElementById('uChart'),
       cross=document.getElementById('uCross'),call=document.getElementById('uCallout'),
       cDay=document.getElementById('uCalDay'),cVal=document.getElementById('uCalVal'),
@@ -1587,9 +1734,12 @@ _USAGE_JS = r"""
   function ftk(n){if(n>=1e9)return (n/1e9).toFixed(2)+'B';if(n>=1e6)return (n/1e6).toFixed(1)+'M';if(n>=1e3)return (n/1e3).toFixed(0)+'K';return ''+Math.round(n);}
   function fax(n){return ftk(n).replace('.0M','M').replace('.0B','B').replace('.0K','K');}
   function mny(n){if(!n)return '$0';if(n>=100)return '$'+Math.round(n).toLocaleString();if(n>=10)return '$'+n.toFixed(0);return '$'+n.toFixed(2);}
+  function costValue(c,u,t){if(t&&u>=t)return 'n/a';return mny(c)+(u?'+':'');}
+  function costLabel(c,u,t){return costValue(c,u,t)+(t&&u>=t?'':' API equivalent');}
   function niceMax(x){if(x<=0)return 1;var e=Math.floor(Math.log10(x)),b=Math.pow(10,e),f=x/b,o=[1,1.5,2,2.5,3,4,5,7.5,10],i;for(i=0;i<o.length;i++)if(f<=o[i])return o[i]*b;return 10*b;}
-  function merge(days){var m={},i,k;for(i=0;i<days.length;i++)for(k in days[i].m){if(!m[k])m[k]=[0,0];m[k][0]+=days[i].m[k][0];m[k][1]+=days[i].m[k][1];}return m;}
-  function weekly(days){var out=[],i;for(i=0;i<days.length;i+=7){var ch=days.slice(i,i+7),t=0,c=0,j;for(j=0;j<ch.length;j++){t+=ch[j].t;c+=ch[j].c;}out.push({l:ch[0].l,t:t,c:c,m:merge(ch),wk:1});}return out;}
+  function merge(days){var m={},i,k;for(i=0;i<days.length;i++)for(k in days[i].m){if(!m[k])m[k]=[0,0,days[i].m[k][2],0];m[k][0]+=days[i].m[k][0];m[k][1]+=days[i].m[k][1];m[k][3]+=days[i].m[k][3]||0;}return m;}
+  function weekly(days){var out=[],i;for(i=0;i<days.length;i+=7){var ch=days.slice(i,i+7),t=0,c=0,u=0,j;for(j=0;j<ch.length;j++){t+=ch[j].t;c+=ch[j].c;u+=ch[j].u||0;}out.push({l:ch[0].l,t:t,c:c,u:u,m:merge(ch),wk:1});}return out;}
+  function providerHtml(mm){var p={},k,i,names=['Anthropic','OpenAI'],h='';for(k in mm){var name=mm[k][2]||'Other';if(!p[name])p[name]=[0,0,0];p[name][0]+=mm[k][0];p[name][1]+=mm[k][1];p[name][2]+=mm[k][3]||0;}for(i=0;i<names.length;i++){var x=p[names[i]]||[0,0,0],cls=names[i].toLowerCase();h+='<div class="usage-provider is-'+cls+'"><span class="up-name"><span class="up-dot"></span>'+names[i]+'</span><span class="up-tokens">'+ftk(x[0])+'</span><span class="up-cost">'+costValue(x[1],x[2],x[0])+'</span></div>';}return h;}
 
   var range='30',bars=[],cur=[],ncur=0,rBig='',rMeta='';
   function activeDaily(){if(range==='all')return UD.slice();var n=range==='7'?7:30;return UD.slice(Math.max(0,UD.length-n));}
@@ -1611,19 +1761,20 @@ _USAGE_JS = r"""
     var step=Math.max(1,Math.ceil(n/6)),xh='';
     for(i=0;i<n;i++)if(i%step===0||i===n-1){var left=((i+0.5)/n)*100;xh+='<span style="left:'+left+'%">'+disp[i].l+'</span>';}
     elX.innerHTML=xh;
-    var tot=0,cost=0,act=0,bd=null;
-    for(i=0;i<daily.length;i++){tot+=daily[i].t;cost+=daily[i].c;if(daily[i].t>0)act++;if(!bd||daily[i].t>bd.t)bd=daily[i];}
+    var tot=0,cost=0,unmatched=0,act=0,bd=null;
+    for(i=0;i<daily.length;i++){tot+=daily[i].t;cost+=daily[i].c;unmatched+=daily[i].u||0;if(daily[i].t>0)act++;if(!bd||daily[i].t>bd.t)bd=daily[i];}
     rBig=ftk(tot)+'<span class="usage-unit">tokens</span>';
-    rMeta=mny(cost)+' estimated · '+act+' active day'+(act===1?'':'s')+((bd&&bd.t)?(' · busiest '+bd.l):'');
+    rMeta=costLabel(cost,unmatched,tot)+' · '+act+' active day'+(act===1?'':'s')+((bd&&bd.t)?(' · peak '+bd.l):'');
     elBig.innerHTML=rBig;elMeta.textContent=rMeta;
     var pv=prevDaily(),pt=0;for(i=0;i<pv.length;i++)pt+=pv[i].t;
     if(range!=='all'&&pt>0){var dp=Math.round((tot-pt)/pt*100);elDelta.textContent=dp===0?'≈ even vs prev':((dp>0?'▲ ':'▼ ')+Math.abs(dp)+'% vs prev');elDelta.hidden=false;}
     else elDelta.hidden=true;
-    elSub.textContent='Claude Code · '+daily[0].l+' – '+daily[daily.length-1].l+(disp.length&&disp[0].wk?' · weekly':' · daily');
-    var mm=merge(daily),arr=[],key;for(key in mm)if(mm[key][0])arr.push([key,mm[key][0],mm[key][1]]);
-    arr.sort(function(a,b){return b[2]-a[2];});
+    elSub.textContent='Claude Code + Codex · '+daily[0].l+' – '+daily[daily.length-1].l+(disp.length&&disp[0].wk?' · weekly':' · daily');
+    var mm=merge(daily),arr=[],key;elProviders.innerHTML=providerHtml(mm);
+    for(key in mm)if(mm[key][0])arr.push([key,mm[key][0],mm[key][1],mm[key][3]||0,mm[key][2]]);
+    arr.sort(function(a,b){return b[1]-a[1];});
     var mx=arr.length?arr[0][1]:1,mh='';
-    for(i=0;i<arr.length;i++){var w=arr[i][1]/mx*100;mh+='<li><span class="um-name">'+arr[i][0]+'</span><span class="um-bar"><span class="um-fill" style="width:'+w+'%"></span></span><span class="um-val">'+ftk(arr[i][1])+' · '+mny(arr[i][2])+'</span></li>';}
+    for(i=0;i<arr.length;i++){var w=arr[i][1]/mx*100,provider=arr[i][4]||'Other',parts=arr[i][0].split(' · '),model=parts.slice(1).join(' · ')||arr[i][0],cls=provider.toLowerCase();mh+='<li class="is-'+cls+'"><span class="um-name"><span class="um-model">'+model+'</span><span class="um-provider">'+provider+'</span></span><span class="um-bar"><span class="um-fill" style="width:'+w+'%"></span></span><span class="um-val"><span class="um-tokens">'+ftk(arr[i][1])+'</span><span class="um-cost">'+costValue(arr[i][2],arr[i][3],arr[i][1])+'</span></span></li>';}
     elModels.innerHTML=mh;
     cur=disp;ncur=n;
   }
@@ -1632,9 +1783,9 @@ _USAGE_JS = r"""
     var p=((i+0.5)/ncur)*100;
     cross.style.left=p+'%';cross.hidden=false;
     call.style.left=Math.max(7,Math.min(93,p))+'%';call.hidden=false;
-    cDay.textContent=(x.wk?'wk '+x.l:x.l);cVal.textContent=ftk(x.t)+' tok';cCost.textContent=x.t?' · '+mny(x.c):'';
+    cDay.textContent=(x.wk?'wk '+x.l:x.l);cVal.textContent=ftk(x.t)+' tok';cCost.textContent=x.t?' · '+costValue(x.c,x.u||0,x.t):'';
     elBig.innerHTML=ftk(x.t)+'<span class="usage-unit">tokens</span>';
-    elMeta.textContent=(x.wk?'wk '+x.l:x.l)+' · '+(x.t?mny(x.c)+' estimated':'no usage');
+    elMeta.textContent=(x.wk?'wk '+x.l:x.l)+' · '+(x.t?costLabel(x.c,x.u||0,x.t):'no usage');
   }
   function clearHover(){var j;for(j=0;j<bars.length;j++)bars[j].classList.remove('is-sel');cross.hidden=true;call.hidden=true;elBig.innerHTML=rBig;elMeta.textContent=rMeta;}
   chart.addEventListener('pointermove',function(e){var r=chart.getBoundingClientRect();var i=Math.floor((e.clientX-r.left)/r.width*ncur);if(i<0)i=0;if(i>=ncur)i=ncur-1;showHover(i);});
@@ -1650,8 +1801,8 @@ def render_usage_html(usage: dict) -> str:
     if not usage or not usage.get("by_day"):
         return ('<section class="usage-widget"><div class="usage-top">'
                 '<span class="usage-label">TOKEN USAGE</span></div>'
-                '<p class="usage-meta">No usage data found in '
-                '<code>~/.claude/projects</code>.</p></section>')
+                '<p class="usage-meta">No usage data found in the local '
+                'Claude Code or Codex logs.</p></section>')
 
     by_day = usage["by_day"]
     days_sorted = sorted(by_day)
@@ -1664,11 +1815,16 @@ def render_usage_html(usage: dict) -> str:
     while d <= end:
         rec = by_day.get(d.isoformat())
         if rec:
-            mdl = {k: [v[0], round(v[1], 4)] for k, v in rec["m"].items()}
+            mdl = {
+                k: [v[0], round(v[1], 4), v[2], v[3]]
+                for k, v in rec["m"].items()
+            }
             series.append({"l": d.strftime("%-d %b"), "t": rec["t"],
-                           "c": round(rec["c"], 4), "m": mdl})
+                           "c": round(rec["c"], 4), "u": rec["u"], "m": mdl})
         else:
-            series.append({"l": d.strftime("%-d %b"), "t": 0, "c": 0, "m": {}})
+            series.append({
+                "l": d.strftime("%-d %b"), "t": 0, "c": 0, "u": 0, "m": {}
+            })
         d += _dt.timedelta(days=1)
 
     data = json.dumps(series, separators=(",", ":")).replace("</", "<\\/")
@@ -1690,6 +1846,7 @@ def render_usage_html(usage: dict) -> str:
         '</div>'
         '<div class="usage-meta" id="uMeta"></div>'
         '<div class="usage-sub" id="uSub"></div>'
+        '<div class="usage-providers" id="uProviders"></div>'
         '</div>'
         '<div class="usage-plot" id="uPlot">'
         '<div class="usage-yaxis" id="uY"></div>'
@@ -1703,10 +1860,14 @@ def render_usage_html(usage: dict) -> str:
         '<div class="uc-caret"></div></div>'
         '</div></div>'
         '<div class="usage-xaxis" id="uX"></div>'
-        '<h4 class="usage-h">By model</h4>'
+        '<div class="usage-model-head">'
+        '<span>Models</span><span aria-hidden="true"></span>'
+        '<span class="usage-model-head-values"><span>Tokens</span>'
+        '<span>API value</span></span></div>'
         '<ul class="usage-models" id="uModels"></ul>'
-        '<p class="usage-foot">Cost estimated at API list rates '
-        '(cache writes 1.25×, reads 0.1×); actual billing depends on your plan.</p>'
+        '<p class="usage-foot">API equivalent, not subscription spend. Auto-review uses '
+        'the GPT-5.3-Codex rate. Older partial logs use observed averages; unmatched '
+        'models show n/a.</p>'
         f'<script>{script}</script>'
         '</section>'
     )
@@ -2589,10 +2750,16 @@ HTML_SHELL = """<!doctype html>
     color: var(--color-ash-gray);
     background: transparent;
     border: none;
-    padding: 3px 11px;
+    min-width: 40px;
+    min-height: 40px;
+    padding: 0 12px;
     border-radius: 6px;
     cursor: pointer;
+    transition-property: transform, background-color, color, box-shadow;
+    transition-duration: 120ms;
+    transition-timing-function: cubic-bezier(0.2, 0, 0, 1);
   }}
+  .usage-seg button:active {{ transform: scale(0.96); }}
   .usage-seg button.active {{
     background: var(--color-midnight-ink);
     color: var(--color-cloud-white);
@@ -2627,6 +2794,60 @@ HTML_SHELL = """<!doctype html>
     font-size: 11px;
     color: var(--color-charcoal-border);
     margin-top: 6px;
+  }}
+  .usage-big,
+  .usage-delta,
+  .usage-meta,
+  .usage-provider,
+  .usage-ylabel,
+  .usage-callout,
+  .usage-xaxis,
+  .usage-models .um-val {{ font-variant-numeric: tabular-nums; }}
+  .usage-providers {{
+    display: grid;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    gap: 10px;
+    margin-top: 16px;
+  }}
+  .usage-provider {{
+    display: grid;
+    grid-template-columns: 1fr auto;
+    align-items: baseline;
+    gap: 3px 16px;
+    min-width: 0;
+    padding: 12px 14px;
+    background: var(--color-stormy-night);
+    border-radius: 10px;
+    font-family: var(--font-mono);
+  }}
+  .usage-provider .up-name {{
+    display: inline-flex;
+    align-items: center;
+    gap: 7px;
+    color: var(--color-ash-gray);
+    font-size: 11px;
+  }}
+  .usage-provider .up-dot {{
+    width: 6px;
+    height: 6px;
+    border-radius: 50%;
+    background: var(--color-ash-gray);
+  }}
+  .usage-provider.is-openai .up-dot {{ background: var(--color-electric-blue); }}
+  .usage-provider .up-tokens {{
+    color: var(--color-cloud-white);
+    font-size: 15px;
+    font-weight: 500;
+    text-align: right;
+  }}
+  .usage-provider .up-cost {{
+    grid-column: 2;
+    color: var(--color-ash-gray);
+    font-size: 11px;
+    text-align: right;
+  }}
+  @media (max-width: 560px) {{
+    .usage-providers {{ grid-template-columns: 1fr; }}
   }}
   .usage-plot {{
     position: relative;
@@ -2726,52 +2947,104 @@ HTML_SHELL = """<!doctype html>
     color: var(--color-ash-gray);
     white-space: nowrap;
   }}
-  .usage-h {{
-    margin: 24px 0 4px;
-    font-size: 13px;
+  .usage-model-head,
+  .usage-models li {{
+    display: grid;
+    grid-template-columns: minmax(170px, 240px) minmax(180px, 1fr) minmax(170px, 210px);
+    column-gap: 28px;
+    align-items: center;
+  }}
+  .usage-model-head {{
+    margin: 26px 0 0;
+    padding-bottom: 8px;
+    font-size: 10px;
     font-family: var(--font-mono);
     font-weight: 500;
-    letter-spacing: 0.5px;
+    letter-spacing: 0.06em;
+    text-transform: uppercase;
     color: var(--color-ash-gray);
+  }}
+  .usage-model-head-values,
+  .usage-models .um-val {{
+    display: grid;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    gap: 18px;
+    text-align: right;
   }}
   .usage-models {{ list-style: none; padding: 0; margin: 0; }}
   .usage-models li {{
-    display: flex;
-    justify-content: space-between;
-    align-items: baseline;
-    gap: 12px;
-    padding: 9px 0;
+    padding: 12px 0;
     border-bottom: 1px solid var(--color-stormy-night);
-    font-size: 14px;
   }}
   .usage-models li:last-child {{ border-bottom: none; }}
   .usage-models .um-bar {{
-    flex: 1 1 auto;
-    height: 6px;
-    border-radius: 3px;
+    width: 100%;
+    height: 4px;
+    border-radius: 2px;
     background: var(--color-stormy-night);
     overflow: hidden;
-    max-width: 220px;
   }}
   .usage-models .um-fill {{
     display: block;
     height: 100%;
     background: var(--color-ash-gray);
-    border-radius: 3px;
+    border-radius: 2px;
   }}
-  .usage-models .um-name {{ color: var(--color-cloud-white); min-width: 84px; }}
+  .usage-models .is-openai .um-fill {{
+    background: var(--color-electric-blue);
+    opacity: 0.72;
+  }}
+  .usage-models .um-name {{
+    display: flex;
+    flex-direction: column;
+    min-width: 0;
+  }}
+  .usage-models .um-model {{
+    overflow: hidden;
+    color: var(--color-cloud-white);
+    font-size: 14px;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }}
+  .usage-models .um-provider {{
+    margin-top: 3px;
+    color: var(--color-ash-gray);
+    font-family: var(--font-mono);
+    font-size: 10px;
+  }}
   .usage-models .um-val {{
     color: var(--color-ash-gray);
     font-family: var(--font-mono);
     font-size: 12px;
-    min-width: 116px;
-    text-align: right;
+  }}
+  .usage-models .um-cost {{ color: var(--color-cloud-white); }}
+  @media (max-width: 760px) and (min-width: 561px) {{
+    .usage-model-head,
+    .usage-models li {{
+      grid-template-columns: minmax(130px, 1fr) minmax(100px, 1.2fr) minmax(140px, 0.9fr);
+      column-gap: 16px;
+    }}
+  }}
+  @media (max-width: 560px) {{
+    .usage-model-head {{ display: none; }}
+    .usage-models {{ margin-top: 24px; }}
+    .usage-models li {{
+      grid-template-columns: minmax(0, 1fr) auto;
+      gap: 8px 16px;
+    }}
+    .usage-models .um-name {{ grid-column: 1; grid-row: 1; }}
+    .usage-models .um-val {{ grid-column: 2; grid-row: 1; min-width: 132px; }}
+    .usage-models .um-bar {{
+      grid-column: 1 / -1;
+      grid-row: 2;
+    }}
   }}
   .usage-foot {{
     font-size: 12px;
     color: var(--color-ash-gray);
     margin-top: 16px;
     line-height: 1.5;
+    text-wrap: pretty;
   }}
 
   /* ─── Calendar widget ─── */

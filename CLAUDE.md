@@ -33,7 +33,7 @@ Not every folder is mandatory. The only one Suma actually needs is `Suma/`.
 Suma is the personal dashboard. It all lives in one folder in the vault, `Suma/`: the markdown sources you edit, the renderer (`build.py`), and the generated `dashboard.html`.
 
 **In the vault (`vault/Suma/`):**
-- `dashboard.md` — Now (project-grouped checkbox tasks) + Check-ins. The Dashboard also shows a daily quote, a live calendar, an activity heatmap from the changelog, and "Birthdays this month" (from `vault/People/` notes).
+- `dashboard.md` — Now (project-grouped checkbox tasks) + Check-ins. The Dashboard also shows a daily quote, a live calendar, an activity heatmap from the changelog, "Birthdays this month" (from `vault/People/` notes), and local Claude Code + Codex token usage.
 - `projects.md` — Overview + Active + Idle / Resumable project state
 - `ideas.md` — sketched, not built; promote into Active in `projects.md` when one earns the time
 - `learning.md` — what you're learning, reading, watching, saving
@@ -48,6 +48,8 @@ Suma is the personal dashboard. It all lives in one folder in the vault, `Suma/`
 - `dashboard.html` — generated single-page view; open by double-click, no server needed
 
 **Suma conventions:**
+
+- **Token usage stays local.** `build.py` reads token metadata from local Claude Code and Codex session logs. It never copies prompts or responses. The generated `dashboard.html` contains private rendered content and aggregate totals, so keep it ignored by git and never publish it.
 
 - **Now** (`dashboard.md`): project-grouped checkbox tasks. One `### Project` heading per active project + `### Personal` at the bottom for personal to-dos. Toggle by editing the markdown: `- [ ] thing` ↔ `- [x] thing`. Do not create a standalone Personal section anywhere else in Suma.
 - **Projects** (`projects.md`): starts with `## Overview` — ~5 short portfolio-summary bullets (counts, primary bets, this week's push, things to watch). Then `## Active` with `### Building` and `### Advising / helping` sub-groups, then `## Idle / Resumable`. Each project is one short status sentence + a "Next:" clause. Scannable, not a project doc.

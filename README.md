@@ -38,7 +38,7 @@ suma-starter/
 
 Suma is one HTML page with eight tabs:
 
-1. **Dashboard** — a daily quote up top, a calendar + activity-heatmap widget row, then "Now" (project-grouped checkbox to-dos as cards), "Check-ins" (one card per person you sync with), "Birthdays this month", and a **token-usage chart** at the bottom — your Claude Code token spend over time, with 7D / 30D / All ranges (auto-scanned; hidden gracefully if you don't use Claude Code)
+1. **Dashboard** — a daily quote up top, a calendar + activity-heatmap widget row, then "Now" (project-grouped checkbox to-dos as cards), "Check-ins" (one card per person you sync with), "Birthdays this month", and a **token-usage chart** at the bottom — your Claude Code and Codex usage over time, with provider and model comparisons plus 7D / 30D / All ranges (auto-scanned; hidden gracefully if you use neither)
 2. **Projects** — Overview (~5 portfolio bullets) + Active (Building / Advising) + Idle / Resumable. One line per project: status + "Next:" clause.
 3. **Ideas** — Sketched, not built. Promote into Projects when one earns the time.
 4. **Learning** — Currently reading / Books / Watch / Leisure / Articles / Tools / Design refs / People / Bookmarks. An inventory, not tasks.
@@ -77,6 +77,12 @@ your-vault/
 ```
 
 No separate code folder, no sibling paths, no config to edit. Drop the kit's `build.py` and `sources/*.md` into `Suma/`, run it, open the dashboard. People notes are optional and live one level up in `vault/People/`; without them the birthdays list just stays hidden.
+
+## Local data and privacy
+
+Suma reads local files and writes a local HTML page. It does not upload your notes, prompts, session transcripts, or token data, and the usage widget needs no API key. It extracts only dates, model labels, token counts, and cache/output splits from Claude Code and Codex logs.
+
+The generated `dashboard.html` contains your rendered private content and aggregate usage totals, so it is intentionally covered by `.gitignore` and must never be committed. Only the reusable renderer and blank/example source files belong in the repository.
 
 ---
 
